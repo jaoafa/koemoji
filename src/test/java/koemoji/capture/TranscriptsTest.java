@@ -25,6 +25,7 @@ class TranscriptsTest {
   final List<Runnable> pendingActions = new ArrayList<>();
   final Map<Long, MessageChannel> destinations = new ConcurrentHashMap<>();
   boolean deferActions;
+  final java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
   Path queueDb;
   Db db;
   Transcripts t;
@@ -91,7 +92,8 @@ class TranscriptsTest {
     calls.clear();
     destinations.clear();
     destinations.put(CHANNEL, channel());
-    t = new Transcripts(c, db, destinations::get);
+    clock.set(System.currentTimeMillis());
+    t = new Transcripts(c, db, destinations::get, clock::get);
     register("u1", 1, "bob");
   }
 
@@ -210,6 +212,86 @@ class TranscriptsTest {
 
     assertEquals(List.of("send:`bob`: `なんか`", "edit:1000:`bob`: `なんか、これ`",
         "edit:1000:`bob`: `なんか`"), calls);
+  }
+
+  private void stuckPartial(String utteranceId, String text) {
+    t.register(utteranceId, 1, 42, System.currentTimeMillis(), "bob");
+    resultFor(utteranceId, "a", 1, false, text);
+  }
+
+  @Test void anUtteranceStuckWithoutAFinalIsAbandonedAfterTheTimeoutAndItsMessageDeleted() {
+    stuckPartial("u1", "first");
+    t.register("u2", 1, 42, System.currentTimeMillis(), "bob");
+    resultFor("u2", "a", 1, true, "second");
+    assertEquals(List.of("send:`bob`: `first`"), calls);
+
+    clock.addAndGet(Transcripts.ACTIVE_UTTERANCE_TIMEOUT_MS + 1);
+    t.apply();
+
+    assertEquals(List.of("send:`bob`: `first`", "delete:1000", "send:`bob`: `second`"), calls);
+  }
+
+  @Test void anAbandonedUtteranceRestoresThePreviousFinalText() {
+    t.register("u1", 1, 42, System.currentTimeMillis(), "bob");
+    resultFor("u1", "a", 1, true, "なんか");
+    stuckPartial("u2", "これ");
+    t.register("u3", 1, 42, System.currentTimeMillis(), "bob");
+    resultFor("u3", "a", 1, true, "next");
+    assertEquals(List.of("send:`bob`: `なんか`", "edit:1000:`bob`: `なんか、これ`"), calls);
+
+    clock.addAndGet(Transcripts.ACTIVE_UTTERANCE_TIMEOUT_MS + 1);
+    t.apply();
+
+    assertEquals(List.of("send:`bob`: `なんか`", "edit:1000:`bob`: `なんか、これ`", "edit:1000:`bob`: `なんか`",
+        "send:`bob`: `next`"), calls);
+  }
+
+  @Test void anUtteranceIsNotAbandonedAtExactlyTheTimeout() {
+    stuckPartial("u1", "first");
+    t.register("u2", 1, 42, System.currentTimeMillis(), "bob");
+    resultFor("u2", "a", 1, true, "second");
+
+    clock.addAndGet(Transcripts.ACTIVE_UTTERANCE_TIMEOUT_MS);
+    t.apply();
+
+    assertEquals(List.of("send:`bob`: `first`"), calls);
+  }
+
+  @Test void aLateFinalAfterAbandonmentStillPosts() {
+    stuckPartial("u1", "first");
+    clock.addAndGet(Transcripts.ACTIVE_UTTERANCE_TIMEOUT_MS + 1);
+    t.apply();
+    assertEquals(List.of("send:`bob`: `first`", "delete:1000"), calls);
+
+    resultFor("u1", "a", 2, true, "first done");
+
+    assertEquals(List.of("send:`bob`: `first`", "delete:1000", "send:`bob`: `first done`"), calls);
+  }
+
+  @Test void aFailedDeleteLeavingDeletePendingDoesNotDeleteALateFinal() {
+    stuckPartial("u1", "first");
+    destinations.put(CHANNEL, channel(CHANNEL, true));
+    clock.addAndGet(Transcripts.ACTIVE_UTTERANCE_TIMEOUT_MS + 1);
+    t.apply();
+    resultFor("u1", "a", 2, true, "first done");
+
+    destinations.put(CHANNEL, channel());
+    int before = calls.size();
+    t.apply();
+
+    assertEquals(before, calls.size());
+  }
+
+  @Test void anInflightGroupIsNotAbandoned() {
+    deferActions = true;
+    stuckPartial("u1", "first");
+    t.register("u2", 1, 42, System.currentTimeMillis(), "bob");
+    resultFor("u2", "a", 1, true, "second");
+
+    clock.addAndGet(Transcripts.ACTIVE_UTTERANCE_TIMEOUT_MS + 1);
+    t.apply();
+
+    assertEquals(List.of("send:`bob`: `first`"), calls);
   }
 
   @Test void differentUserIdsNeverShareAMessageEvenWhenNamesMatch() {
