@@ -32,6 +32,45 @@ class MainTest {
     assertThrows(IllegalStateException.class, () -> Main.validate(config(Map.of("VAD_END_SILENCE_MS", "0"))));
   }
 
+  private static void assertRejected(String key, String value, String named) throws Exception {
+    var e = assertThrows(IllegalStateException.class, () -> Main.validate(config(Map.of(key, value))), key + "=" + value);
+    assertTrue(e.getMessage().contains(named), e.getMessage());
+  }
+
+  @Test void validateRejectsUnknownEnginesInThePreprocessingSettings() throws Exception {
+    assertRejected("ASR_PAD_MS_BY_ENGINE", "nope:100", "ASR_PAD_MS_BY_ENGINE");
+    assertRejected("ASR_PAD_MS_BY_ENGINE", "nope:100", "nope");
+    assertRejected("ASR_NORMALIZE_ENGINES", "nope", "ASR_NORMALIZE_ENGINES");
+    assertRejected("ASR_NORMALIZE_ENGINES", "sensevoice,nope", "nope");
+  }
+
+  @Test void validateRejectsNegativePadding() throws Exception {
+    assertRejected("ASR_PAD_MS", "-1", "ASR_PAD_MS");
+    assertRejected("ASR_PAD_MS_BY_ENGINE", "sensevoice:-5", "ASR_PAD_MS_BY_ENGINE");
+    assertRejected("ASR_PAD_MS_BY_ENGINE", "sensevoice:-5", "sensevoice:-5");
+  }
+
+  @Test void validateRejectsOutOfRangeNormalizationValues() throws Exception {
+    assertRejected("ASR_NORMALIZE_MAX_GAIN_DB", "-1", "ASR_NORMALIZE_MAX_GAIN_DB");
+    assertRejected("ASR_NORMALIZE_PEAK", "0", "ASR_NORMALIZE_PEAK");
+    assertRejected("ASR_NORMALIZE_PEAK", "1.5", "ASR_NORMALIZE_PEAK");
+    assertRejected("ASR_NORMALIZE_TARGET_DBFS", "3", "ASR_NORMALIZE_TARGET_DBFS");
+  }
+
+  @Test void validateRejectsNonFiniteNormalizationValues() throws Exception {
+    assertRejected("ASR_NORMALIZE_TARGET_DBFS", "NaN", "ASR_NORMALIZE_TARGET_DBFS");
+    assertRejected("ASR_NORMALIZE_MAX_GAIN_DB", "Infinity", "ASR_NORMALIZE_MAX_GAIN_DB");
+    assertRejected("ASR_NORMALIZE_PEAK", "NaN", "ASR_NORMALIZE_PEAK");
+  }
+
+  @Test void validateAcceptsPreprocessingSettings() throws Exception {
+    assertDoesNotThrow(() -> Main.validate(config(Map.of(
+        "ASR_PAD_MS", "300", "ASR_PAD_MS_BY_ENGINE", "reazon-ja:600,sensevoice:0",
+        "ASR_NORMALIZE_ENGINES", "reazon-ja", "ASR_NORMALIZE_TARGET_DBFS", "-23",
+        "ASR_NORMALIZE_MAX_GAIN_DB", "0", "ASR_NORMALIZE_PEAK", "1"))));
+    assertDoesNotThrow(() -> Main.validate(config(Map.of("ASR_PAD_MS_BY_ENGINE", "whisper-small:100"))));
+  }
+
   @Test void validateRejectsUnknownMode() throws Exception {
     assertThrows(IllegalStateException.class, () -> Main.validate(config(Map.of("MODE", "workers"))));
     for (String m : new String[] {"all", "capture", "worker"}) assertDoesNotThrow(() -> Main.validate(config(Map.of("MODE", m))));

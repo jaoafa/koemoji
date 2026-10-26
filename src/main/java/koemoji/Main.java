@@ -38,5 +38,20 @@ public final class Main {
     if (c.capture() && c.worker())
       for (String e : c.engines())
         if (!c.workerEngines().contains(e)) throw new IllegalStateException("No worker for engine " + e + " (add it to WORKER_ENGINES)");
+    if (c.padMs() < 0) throw new IllegalStateException("ASR_PAD_MS must not be negative: " + c.padMs());
+    for (var e : c.padMsByEngine().entrySet())
+      if (e.getValue() < 0) throw new IllegalStateException("ASR_PAD_MS_BY_ENGINE must not be negative: " + e.getKey() + ":" + e.getValue());
+    requireKnownEngines("ASR_PAD_MS_BY_ENGINE", c.padMsByEngine().keySet());
+    requireKnownEngines("ASR_NORMALIZE_ENGINES", c.normalizeEngines());
+    float target = c.normalizeTargetDbfs(), maxGain = c.normalizeMaxGainDb(), peak = c.normalizePeak();
+    if (!Float.isFinite(target) || target > 0) throw new IllegalStateException("ASR_NORMALIZE_TARGET_DBFS must be a finite number <= 0: " + target);
+    if (!Float.isFinite(maxGain) || maxGain < 0) throw new IllegalStateException("ASR_NORMALIZE_MAX_GAIN_DB must be a finite number >= 0: " + maxGain);
+    if (!Float.isFinite(peak) || peak <= 0 || peak > 1) throw new IllegalStateException("ASR_NORMALIZE_PEAK must be in (0, 1]: " + peak);
+  }
+
+  private static void requireKnownEngines(String variable, java.util.Collection<String> names) {
+    for (String e : names)
+      if (!SherpaEngine.DIRS.containsKey(e))
+        throw new IllegalStateException("Unknown engine: " + e + " in " + variable + " (known: " + SherpaEngine.DIRS.keySet() + ")");
   }
 }
