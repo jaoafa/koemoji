@@ -7,6 +7,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongFunction;
+import java.util.function.LongSupplier;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.utils.MarkdownSanitizer;
@@ -21,6 +22,7 @@ final class Transcripts {
   private static final Logger log = LoggerFactory.getLogger(Transcripts.class);
   private static final long JOIN_GRACE_MS = 1_200;
   private static final long GROUP_RETENTION_MS = 60_000;
+  static final long ACTIVE_UTTERANCE_TIMEOUT_MS = 60_000;
 
   private static final class Msg {
     Group group;
@@ -41,6 +43,8 @@ final class Transcripts {
     int activeScoredTokenCount;
     boolean activeScoreAvailable;
     String activeUtteranceId;
+    Utt activeUtt;
+    long activeUpdatedAt;
     long lastFinalAt;
     boolean deletePending;
   }
@@ -66,7 +70,13 @@ final class Transcripts {
   private final Map<String, Utt> utts = new ConcurrentHashMap<>();
   private final Map<GroupKey, Group> displayGroups = new ConcurrentHashMap<>();
 
-  Transcripts(Config c, Db db, LongFunction<MessageChannel> channels) { this.c = c; this.db = db; this.channels = channels; }
+  private final LongSupplier clock;
+
+  Transcripts(Config c, Db db, LongFunction<MessageChannel> channels) { this(c, db, channels, System::currentTimeMillis); }
+
+  Transcripts(Config c, Db db, LongFunction<MessageChannel> channels, LongSupplier clock) {
+    this.c = c; this.db = db; this.channels = channels; this.clock = clock;
+  }
 
   long inflightCount() { return displayGroups.values().stream().filter(group -> group.inflight).count(); }
 
@@ -79,7 +89,15 @@ final class Transcripts {
   /** Applies the newest completed revision per (utterance, engine). */
   void apply() {
     var done = db.pollDone();
-    long now = System.currentTimeMillis();
+    long now = clock.getAsLong();
+    displayGroups.forEach((key, group) -> {
+      if (group.activeUtteranceId != null && !group.inflight && !group.deletePending
+          && now - group.activeUpdatedAt > ACTIVE_UTTERANCE_TIMEOUT_MS) {
+        log.warn("abandoning utterance {} stuck without a final for guild {}, engine {}, channel {}",
+            group.activeUtteranceId, key.guildId(), key.engine(), key.channelId());
+        abandonActive(group.activeUtt, key.engine(), group, now);
+      }
+    });
     displayGroups.forEach((key, group) -> {
       if (group.deletePending && !group.inflight) deleteGroupMessage(key, group);
     });
@@ -120,41 +138,48 @@ final class Transcripts {
 
   private void failFinal(String id, Utt u, String engine, Msg m, long completedAt) {
     Group group = m.group;
-    if (group != null && id.equals(group.activeUtteranceId)) {
-      group.activeText = "";
-      group.activeLogProbabilitySum = 0;
-      group.activeScoredTokenCount = 0;
-      group.activeScoreAvailable = false;
-      group.activeUtteranceId = null;
-      if (!group.stableText.isEmpty()) group.lastFinalAt = completedAt;
-      else {
-        Long channelId = u.routes.get(engine);
-        group.lastFinalAt = completedAt;
-        if (group.messageId != null) group.deletePending = true;
-        else displayGroups.remove(new GroupKey(u.guildId, u.userId, engine, channelId), group);
-      }
-      if (!group.stableText.isEmpty() && group.messageId != null) {
-        Long channelId = u.routes.get(engine);
-        MessageChannel ch = channelId == null ? null : channels.apply(channelId);
-        if (ch != null) {
-          boolean defaultFormat = c.messageFormat().equals(Config.DEFAULT_MESSAGE_FORMAT);
-          String user = defaultFormat ? escapeCodeSpan(u.name) : escapeName(u.name);
-          String text = defaultFormat ? escapeCodeSpan(group.stableText) : group.stableText;
-          boolean sharesDestination = u.routes.values().stream().filter(channelId::equals).count() > 1;
-          String body = renderMessage(engine, user, text, sharesDestination, group, defaultFormat);
-          Long messageId = group.messageId;
-          group.inflight = true;
-          try {
-            ch.editMessageById(messageId, body).setAllowedMentions(List.of()).queue(
-                x -> group.inflight = false, err -> group.inflight = false);
-          } catch (RuntimeException ex) {
-            group.inflight = false;
-            log.warn("cannot restore final transcript for guild {}, engine {}, channel {}", u.guildId, engine, channelId, ex);
-          }
+    if (group != null && id.equals(group.activeUtteranceId)) abandonActive(u, engine, group, completedAt);
+    settle(id, u);
+  }
+
+  /** active 発話を破棄し、表示を確定済みテキストへ戻す (確定済みテキストが無ければメッセージを削除する)。 */
+  private void abandonActive(Utt u, String engine, Group group, long at) {
+    group.activeText = "";
+    group.activeLogProbabilitySum = 0;
+    group.activeScoredTokenCount = 0;
+    group.activeScoreAvailable = false;
+    group.activeUtteranceId = null;
+    group.activeUtt = null;
+    group.lastFinalAt = at;
+    if (group.stableText.isEmpty()) {
+      Long channelId = u.routes.get(engine);
+      if (group.messageId != null) group.deletePending = true;
+      else displayGroups.remove(new GroupKey(u.guildId, u.userId, engine, channelId), group);
+    }
+    if (!group.stableText.isEmpty() && group.messageId != null) {
+      Long channelId = u.routes.get(engine);
+      MessageChannel ch = channelId == null ? null : channels.apply(channelId);
+      if (ch != null) {
+        boolean defaultFormat = c.messageFormat().equals(Config.DEFAULT_MESSAGE_FORMAT);
+        String user = defaultFormat ? escapeCodeSpan(u.name) : escapeName(u.name);
+        String text = defaultFormat ? escapeCodeSpan(group.stableText) : group.stableText;
+        boolean sharesDestination = u.routes.values().stream().filter(channelId::equals).count() > 1;
+        String body = renderMessage(engine, user, text, sharesDestination, group, defaultFormat);
+        Long messageId = group.messageId;
+        group.inflight = true;
+        try {
+          ch.editMessageById(messageId, body).setAllowedMentions(List.of()).queue(
+              x -> group.inflight = false,
+              err -> {
+                group.inflight = false;
+                log.warn("cannot restore final transcript for guild {}, engine {}, channel {}", u.guildId, engine, channelId, err);
+              });
+        } catch (RuntimeException ex) {
+          group.inflight = false;
+          log.warn("cannot restore final transcript for guild {}, engine {}, channel {}", u.guildId, engine, channelId, ex);
         }
       }
     }
-    settle(id, u);
   }
 
   private void deleteGroupMessage(GroupKey key, Group group) {
@@ -174,7 +199,11 @@ final class Transcripts {
             group.deletePending = false;
             group.inflight = false;
             displayGroups.remove(key, group);
-          }, err -> group.inflight = false);
+          }, err -> {
+            group.inflight = false;
+            log.warn("cannot retract failed transcript for guild {}, engine {}, channel {}",
+                key.guildId(), key.engine(), key.channelId(), err);
+          });
     } catch (RuntimeException ex) {
       group.inflight = false;
       log.warn("cannot retract failed transcript for guild {}, engine {}, channel {}",
@@ -359,7 +388,6 @@ final class Transcripts {
     if (group == null) {
       var key = new GroupKey(u.guildId, u.userId, engine, channelId);
       Group candidate = displayGroups.get(key);
-      long now = System.currentTimeMillis();
       long gapMs = candidate == null ? Long.MAX_VALUE : u.startedAtMs - candidate.lastFinalAt;
       if (candidate != null && (candidate.activeUtteranceId != null || candidate.lastFinalAt <= 0
           || gapMs < 0 || gapMs > JOIN_GRACE_MS)) {
@@ -379,6 +407,9 @@ final class Transcripts {
       group.activeScoreAvailable = false;
     }
     if (!text.isEmpty()) {
+      group.deletePending = false;  // 破棄後の遅れた結果が届いたら、削除失敗で残った保留を取り消して投稿を消さない
+      group.activeUtt = u;
+      group.activeUpdatedAt = clock.getAsLong();
       group.activeText = text;
       group.activeLogProbabilitySum = d.logProbabilitySum();
       group.activeScoredTokenCount = d.scoredTokenCount();
@@ -399,6 +430,8 @@ final class Transcripts {
         split.activeScoredTokenCount = d.scoredTokenCount();
         split.activeScoreAvailable = d.scoredTokenCount() > 0 && Double.isFinite(d.logProbabilitySum());
         split.activeUtteranceId = fin ? null : id;
+        split.activeUtt = fin ? null : u;
+        split.activeUpdatedAt = clock.getAsLong();
         group = split;
         m.group = split;
         displayGroups.put(new GroupKey(u.guildId, u.userId, engine, channelId), split);
@@ -420,6 +453,7 @@ final class Transcripts {
       group.activeScoredTokenCount = 0;
       group.activeScoreAvailable = false;
       group.activeUtteranceId = null;
+      group.activeUtt = null;
       group.lastFinalAt = d.createdAt();
     }
 
