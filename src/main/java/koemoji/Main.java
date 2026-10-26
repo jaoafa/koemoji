@@ -5,9 +5,19 @@ import koemoji.asr.SherpaEngine;
 import koemoji.asr.Worker;
 import koemoji.capture.Bot;
 import koemoji.queue.Db;
+import koemoji.replay.Replay;
 
 public final class Main {
   public static void main(String[] args) throws Exception {
+    String error = subcommandError(args);
+    if (error != null) {
+      System.err.println(error);
+      System.exit(2);
+    }
+    if (args.length > 0) {
+      Replay.main(java.util.Arrays.copyOfRange(args, 1, args.length));
+      return;
+    }
     Config c = Config.fromEnv();
     validate(c);
     Db db = new Db(c);
@@ -23,6 +33,10 @@ public final class Main {
     Bot b = bot;
     if (c.healthPort() > 0) new Ops(c, db, () -> b != null && b.connected(), new UpdateDrain(db, bot, worker));
     Thread.currentThread().join();
+  }
+
+  static String subcommandError(String[] args) {
+    return args.length == 0 || args[0].equals("replay") ? null : "Unknown subcommand: " + args[0] + " (known: replay)";
   }
 
   /** Fails fast on config that would silently do nothing or strand jobs: bad MODE, empty or unknown engines, engines no local worker serves. */

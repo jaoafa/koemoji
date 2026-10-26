@@ -105,7 +105,7 @@ public final class Worker {
     }
   }
 
-  static float[] preprocess(float[] x, Config c, String engine) {
+  public static float[] preprocess(float[] x, Config c, String engine) {
     float[] y = c.normalizes(engine) ? normalize(x, c.normalizeTargetDbfs(), c.normalizeMaxGainDb(), c.normalizePeak()) : x;
     return pad(y, c.padMsFor(engine));
   }
@@ -137,7 +137,7 @@ public final class Worker {
   }
 
   /** Reads only the first snapshotBytes so a still-growing recording file is an immutable snapshot. */
-  private static float[] read(String path, long bytes) throws IOException {
+  public static float[] read(String path, long bytes) throws IOException {
     byte[] b = new byte[(int) bytes];
     try (var f = new RandomAccessFile(path, "r")) { f.readFully(b); }
     var s = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer();
