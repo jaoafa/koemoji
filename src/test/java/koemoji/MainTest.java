@@ -16,6 +16,12 @@ class MainTest {
     return Config.of(env::get);
   }
 
+  @Test void onlyTheReplaySubcommandIsKnown() {
+    assertNull(Main.subcommandError(new String[] {}));
+    assertNull(Main.subcommandError(new String[] {"replay", "--engines", "sensevoice"}));
+    assertEquals("Unknown subcommand: reply (known: replay)", Main.subcommandError(new String[] {"reply"}));
+  }
+
   @Test void validateRejectsUnknownEnginesAndEnginesWithoutWorker() throws Exception {
     assertThrows(IllegalStateException.class, () -> Main.validate(config(java.util.Map.of("ASR_ENGINES", "nope"))));
     assertThrows(IllegalStateException.class, () -> Main.validate(config(java.util.Map.of(
