@@ -2,6 +2,8 @@ package koemoji;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import koemoji.asr.SherpaEngine;
+
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,6 +31,32 @@ class MainTest {
     assertDoesNotThrow(() -> Main.validate(config(java.util.Map.of("ASR_ENGINES", "sensevoice,reazon-ja"))));
     assertDoesNotThrow(() -> Main.validate(config(java.util.Map.of(
         "MODE", "capture", "ASR_ENGINES", "sensevoice,reazon-ja", "WORKER_ENGINES", "sensevoice"))));
+  }
+
+  private static void assertRejected(Map<String, String> env, String message) {
+    var e = assertThrows(IllegalStateException.class, () -> Main.validate(config(env)));
+    assertEquals(message, e.getMessage());
+  }
+
+  @Test void validateRejectsAnUnknownEngineInTheDecodingMethodList() throws Exception {
+    assertRejected(Map.of("ASR_DECODING_METHOD_BY_ENGINE", "nope:greedy_search"),
+        "Unknown engine: nope in ASR_DECODING_METHOD_BY_ENGINE (known: " + SherpaEngine.DIRS.keySet() + ")");
+  }
+
+  @Test void validateRejectsADecodingMethodTheWorkersCannotRun() throws Exception {
+    var unsupported = "Decoding method modified_beam_search is not supported by engine sensevoice (transducer engines only: [reazon-ja, reazon-ja-en])";
+    assertRejected(Map.of("ASR_ENGINES", "sensevoice,reazon-ja", "ASR_DECODING_METHOD", "modified_beam_search"), unsupported);
+    assertDoesNotThrow(() -> Main.validate(config(Map.of("ASR_ENGINES", "sensevoice,reazon-ja",
+        "ASR_DECODING_METHOD_BY_ENGINE", "reazon-ja:modified_beam_search"))));
+    assertRejected(Map.of("MODE", "worker", "ASR_ENGINES", "reazon-ja", "WORKER_ENGINES", "sensevoice",
+        "ASR_DECODING_METHOD_BY_ENGINE", "sensevoice:modified_beam_search"), unsupported);
+  }
+
+  @Test void validateChecksTheDecodingMethodOnlyForEnginesThisProcessRuns() throws Exception {
+    assertDoesNotThrow(() -> Main.validate(config(Map.of("MODE", "worker", "ASR_ENGINES", "sensevoice,reazon-ja",
+        "WORKER_ENGINES", "reazon-ja", "ASR_DECODING_METHOD", "modified_beam_search"))));
+    assertDoesNotThrow(() -> Main.validate(config(Map.of("MODE", "capture", "ASR_ENGINES", "sensevoice",
+        "ASR_DECODING_METHOD", "modified_beam_search"))));
   }
 
   @Test void validateRejectsConfigsThatWouldDoNothing() throws Exception {

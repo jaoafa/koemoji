@@ -5,6 +5,7 @@ import koemoji.Config;
 import com.k2fsa.sherpa.onnx.*;
 import java.io.IOException;
 import java.nio.file.*;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -23,19 +24,31 @@ public final class SherpaEngine implements AsrEngine {
       "parakeet-ja", "sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8",
       "dolphin-small", "sherpa-onnx-dolphin-small-ctc-multi-lang-int8-2025-04-02");
 
+  private static final List<String> TRANSDUCER_ENGINES = List.of("reazon-ja", "reazon-ja-en");
+
   private final String name;
   private final OfflineRecognizer rec;
+
+  /** 未対応のデコード方式を渡すと sherpa-onnx は例外ではなくプロセスごと終了するので、モデルを読む前にここで弾く。 */
+  public static void requireDecoding(String engine, String method) {
+    if (method.equals(Config.GREEDY_SEARCH)) return;
+    if (!method.equals(Config.MODIFIED_BEAM_SEARCH)) throw new IllegalArgumentException("Unknown decoding method: " + method);
+    if (!TRANSDUCER_ENGINES.contains(engine))
+      throw new IllegalArgumentException("Decoding method " + method + " is not supported by engine " + engine
+          + " (transducer engines only: " + TRANSDUCER_ENGINES + ")");
+  }
 
   public SherpaEngine(String name, Config c) {
     this.name = name;
     String sub = DIRS.get(name);
     if (sub == null) throw new IllegalArgumentException("Unknown engine: " + name + " (known: " + DIRS.keySet() + ")");
+    requireDecoding(name, c.decodingMethodFor(name));
     Path d = c.modelsDir().resolve(sub);
     var mc = OfflineModelConfig.builder().setNumThreads(c.asrThreads()).setDebug(false).setProvider("cpu");
     switch (name) {
       case "sensevoice" -> mc.setSenseVoice(OfflineSenseVoiceModelConfig.builder()
               .setModel(d.resolve("model.int8.onnx").toString()).setLanguage(c.language())
-              .setInverseTextNormalization(true).build())
+              .setInverseTextNormalization(c.sensevoiceItn()).build())
           .setTokens(d.resolve("tokens.txt").toString());
       case "reazon-ja-en", "reazon-ja" -> mc.setTransducer(OfflineTransducerModelConfig.builder()
               .setEncoder(find(d, "encoder*.int8.onnx")).setDecoder(find(d, "decoder*.int8.onnx"))
@@ -58,7 +71,8 @@ public final class SherpaEngine implements AsrEngine {
           .setTokens(find(d, "*tokens.txt"));
       default -> throw new IllegalStateException(name);
     }
-    rec = new OfflineRecognizer(OfflineRecognizerConfig.builder().setOfflineModelConfig(mc.build()).build());
+    rec = new OfflineRecognizer(OfflineRecognizerConfig.builder().setOfflineModelConfig(mc.build())
+        .setDecodingMethod(c.decodingMethodFor(name)).setMaxActivePaths(c.maxActivePaths()).build());
   }
 
   private static String find(Path dir, String glob) {
