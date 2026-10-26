@@ -71,7 +71,12 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
-| `ASR_PAD_MS` | `0` | ASR に渡す音声の前後に足す無音の長さ |
+| `ASR_PAD_MS` | `0` | ASR に渡す音声の前後に足す無音の長さ。全エンジンの既定で、エンジン別に変えるには `ASR_PAD_MS_BY_ENGINE` を使います |
+| `ASR_PAD_MS_BY_ENGINE` | (空) | エンジン別のパディング(ミリ秒)。`name:ms` のカンマ区切りで、例は `sensevoice:0,reazon-ja:600`。指定のないエンジンは `ASR_PAD_MS` を使います |
+| `ASR_NORMALIZE_ENGINES` | (空) | 音量正規化を有効にするエンジン(カンマ区切り)。空なら全エンジンで無効です |
+| `ASR_NORMALIZE_TARGET_DBFS` | `-20` | 正規化の目標 RMS(dBFS) |
+| `ASR_NORMALIZE_MAX_GAIN_DB` | `20` | 正規化で増幅するゲインの上限(dB)。減衰には効きません |
+| `ASR_NORMALIZE_PEAK` | `0.99` | 正規化後のピーク(絶対値)の上限 |
 | `PARTIAL_INTERVAL_MS` | `2000` | partial 認識の間隔 |
 | `MAX_UTTERANCE_MS` | `30000` | この長さで発話を確定し、続きを新しい発話として扱います |
 | `VAD_THRESHOLD` | `0.5` | Silero の発話確率のしきい値 |
@@ -79,6 +84,8 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 | `MIN_UTTERANCE_MS` | `300` | これより短い発話は捨てます |
 | `AUDIO_TTL_MIN` / `FAILED_AUDIO_TTL_MIN` | `30` / `1440` | すべての final が確定してから、音声を削除するまでの時間 |
 | `RETRY_MAX` / `RETRY_BACKOFF_MS` | `5` / `2000` | final ジョブの再試行回数と、指数バックオフの基準時間 |
+
+ASR に渡す前の音声には、正規化、パディングの順に処理を適用します。partial と final のどちらにも同じ処理がかかります。RMS が -60 dBFS 未満の音声は、ノイズから誤った文字が出るのを避けるため、正規化しても増幅しません。
 
 ## データの置き場
 

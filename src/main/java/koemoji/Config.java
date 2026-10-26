@@ -2,7 +2,11 @@ package koemoji;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.ToIntBiFunction;
@@ -14,7 +18,9 @@ public record Config(
     int partialMs, int maxUtteranceMs, int audioTtlMin, int failedAudioTtlMin,
     float vadThreshold, int vadStartMs, int vadEndSilenceMs, int minUtteranceMs, int prerollMs,
     int retryMax, int retryBackoffMs, String language, int padMs, boolean includeBots, int healthPort,
-    String messageFormat, String updateSecret) {
+    String messageFormat, String updateSecret,
+    Map<String, Integer> padMsByEngine, List<String> normalizeEngines,
+    float normalizeTargetDbfs, float normalizeMaxGainDb, float normalizePeak) {
 
   public static final String DEFAULT_MESSAGE_FORMAT = "`{user}`: `{text}`";
 
@@ -43,7 +49,12 @@ public record Config(
         i.applyAsInt("VAD_PREROLL_MS", 320), i.applyAsInt("RETRY_MAX", 5), i.applyAsInt("RETRY_BACKOFF_MS", 2000),
         s.apply("ASR_LANGUAGE", "ja"), i.applyAsInt("ASR_PAD_MS", 0),
         Boolean.parseBoolean(s.apply("INCLUDE_BOTS", "true")), i.applyAsInt("HEALTH_PORT", 8080),
-        s.apply("MESSAGE_FORMAT", DEFAULT_MESSAGE_FORMAT), s.apply("UPDATE_CONTROL_SECRET", ""));
+        s.apply("MESSAGE_FORMAT", DEFAULT_MESSAGE_FORMAT), s.apply("UPDATE_CONTROL_SECRET", ""),
+        padByEngine("ASR_PAD_MS_BY_ENGINE", s.apply("ASR_PAD_MS_BY_ENGINE", "")),
+        names(s.apply("ASR_NORMALIZE_ENGINES", "")),
+        parseFloat("ASR_NORMALIZE_TARGET_DBFS", s.apply("ASR_NORMALIZE_TARGET_DBFS", "-20")),
+        parseFloat("ASR_NORMALIZE_MAX_GAIN_DB", s.apply("ASR_NORMALIZE_MAX_GAIN_DB", "20")),
+        parseFloat("ASR_NORMALIZE_PEAK", s.apply("ASR_NORMALIZE_PEAK", "0.99")));
   }
 
   private static float parseFloat(String key, String v) {
@@ -53,6 +64,27 @@ public record Config(
 
   public boolean capture() { return !mode.equals("worker"); }
   public boolean worker() { return !mode.equals("capture"); }
+
+  public int padMsFor(String engine) { return padMsByEngine.getOrDefault(engine, padMs); }
+  public boolean normalizes(String engine) { return normalizeEngines.contains(engine); }
+
+  private static List<String> names(String v) {
+    return Arrays.stream(v.split(",")).map(String::trim).filter(n -> !n.isEmpty()).toList();
+  }
+
+  private static Map<String, Integer> padByEngine(String key, String v) {
+    var out = new LinkedHashMap<String, Integer>();
+    for (String e : names(v)) {
+      int colon = e.indexOf(':');
+      String name = colon < 0 ? "" : e.substring(0, colon).trim();
+      if (name.isEmpty()) throw new IllegalArgumentException(key + " entries must be name:ms: " + e);
+      int ms;
+      try { ms = Integer.parseInt(e.substring(colon + 1).trim()); }
+      catch (NumberFormatException ex) { throw new NumberFormatException(key + " ms must be an integer: " + e); }
+      if (out.put(name, ms) != null) throw new IllegalArgumentException(key + " names an engine twice: " + name);
+    }
+    return Collections.unmodifiableMap(out);
+  }
 
   private static List<String> list(String v) { return List.of(v.trim().split("\\s*,\\s*")); }
 

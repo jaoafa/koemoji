@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 public final class Worker {
   private static final Logger log = LoggerFactory.getLogger(Worker.class);
   private static final long STALE_MS = 5 * 60_000;
+  private static final double SILENCE_DBFS = -60;
 
   private static final AtomicInteger alive = new AtomicInteger();
   /** Per "engine|final|partial": [jobs, nanoseconds spent recognizing]. */
@@ -57,7 +58,7 @@ public final class Worker {
     boolean up = false;
     long backoff = 1000;
     try (engine) {
-      log.info("worker {} ready ({})", id, engine.capabilities());
+      log.info("worker {} ready ({}, pad={} ms, normalize={})", id, engine.capabilities(), c.padMsFor(engineName), c.normalizes(engineName));
       alive.incrementAndGet();
       up = true;
       while (!Thread.currentThread().isInterrupted()) {
@@ -91,7 +92,7 @@ public final class Worker {
 
   private static void run(Config c, Db db, String id, AsrEngine engine, String engineName, Db.Job j) {
     try {
-      float[] pcm = pad(read(j.audioPath(), j.snapshotBytes()), c.padMs());
+      float[] pcm = preprocess(read(j.audioPath(), j.snapshotBytes()), c, engineName);
       long t = System.nanoTime();
       AsrEngine.Result result = j.isFinal() ? engine.recognizeFinal(pcm) : engine.recognizePartial(pcm);
       long took = System.nanoTime() - t;
@@ -102,6 +103,28 @@ public final class Worker {
       log.warn("job {} failed (retry {})", j.id(), j.retryCount(), e);
       db.fail(j, id, String.valueOf(e), c.retryMax(), c.retryBackoffMs());
     }
+  }
+
+  static float[] preprocess(float[] x, Config c, String engine) {
+    float[] y = c.normalizes(engine) ? normalize(x, c.normalizeTargetDbfs(), c.normalizeMaxGainDb(), c.normalizePeak()) : x;
+    return pad(y, c.padMsFor(engine));
+  }
+
+  /** RMS が -60 dBFS 未満の音声は、増幅するとモデルがノイズから文字を出力するため、そのまま返す。 */
+  public static float[] normalize(float[] x, float targetDbfs, float maxGainDb, float peak) {
+    double sumSquares = 0, maxAbs = 0;
+    for (float v : x) {
+      sumSquares += (double) v * v;
+      maxAbs = Math.max(maxAbs, Math.abs(v));
+    }
+    if (x.length == 0 || sumSquares == 0) return x;
+    double rmsDb = 10 * Math.log10(sumSquares / x.length);
+    if (rmsDb < SILENCE_DBFS) return x;
+    double gain = Math.min(Math.pow(10, (targetDbfs - rmsDb) / 20), Math.pow(10, maxGainDb / 20.0));
+    gain = Math.min(gain, peak / maxAbs);
+    float[] out = new float[x.length];
+    for (int i = 0; i < out.length; i++) out[i] = (float) (x[i] * gain);
+    return out;
   }
 
   /** Zero-pads both ends; some models drop the first/last sound when audio starts or stops abruptly. */
