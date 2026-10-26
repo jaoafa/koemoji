@@ -101,6 +101,79 @@ class ConfigTest {
     assertTrue(e.getMessage().contains("ASR_NORMALIZE_PEAK"));
   }
 
+  @Test void recognitionTunablesDefaultToTheBehaviorBeforeTheyWereConfigurable() {
+    var c = of(Map.of());
+    assertEquals("greedy_search", c.decodingMethod());
+    assertEquals(Map.of(), c.decodingMethodByEngine());
+    assertEquals("greedy_search", c.decodingMethodFor("sensevoice"));
+    assertEquals("greedy_search", c.decodingMethodFor("reazon-ja"));
+    assertEquals(4, c.maxActivePaths());
+    assertTrue(c.sensevoiceItn());
+    assertEquals(-60f, c.normalizeSilenceDbfs());
+  }
+
+  @Test void decodingMethodAppliesToEveryEngineUnlessAnEngineOverridesIt() {
+    var all = of(Map.of("ASR_DECODING_METHOD", "modified_beam_search"));
+    assertEquals("modified_beam_search", all.decodingMethodFor("sensevoice"));
+    assertEquals("modified_beam_search", all.decodingMethodFor("reazon-ja"));
+    var one = of(Map.of("ASR_DECODING_METHOD_BY_ENGINE", " reazon-ja:modified_beam_search , "));
+    assertEquals("modified_beam_search", one.decodingMethodFor("reazon-ja"));
+    assertEquals("greedy_search", one.decodingMethodFor("sensevoice"));
+    var mixed = of(Map.of("ASR_DECODING_METHOD", "modified_beam_search", "ASR_DECODING_METHOD_BY_ENGINE", "sensevoice:greedy_search"));
+    assertEquals("greedy_search", mixed.decodingMethodFor("sensevoice"));
+    assertEquals("modified_beam_search", mixed.decodingMethodFor("reazon-ja"));
+  }
+
+  @Test void decodingMethodRejectsUnknownMethodsNamingTheVariableAndValue() {
+    var global = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_DECODING_METHOD", "beam")));
+    assertEquals("ASR_DECODING_METHOD must be greedy_search or modified_beam_search: beam", global.getMessage());
+    var perEngine = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_DECODING_METHOD_BY_ENGINE", "reazon-ja:beam")));
+    assertEquals("ASR_DECODING_METHOD_BY_ENGINE must be greedy_search or modified_beam_search: reazon-ja:beam", perEngine.getMessage());
+    var upper = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_DECODING_METHOD", "GREEDY_SEARCH")));
+    assertTrue(upper.getMessage().contains("GREEDY_SEARCH"));
+  }
+
+  @Test void decodingMethodByEngineRejectsMalformedElementsNamingTheVariableAndValue() {
+    var noColon = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_DECODING_METHOD_BY_ENGINE", "reazon-ja")));
+    assertEquals("ASR_DECODING_METHOD_BY_ENGINE entries must be name:method: reazon-ja", noColon.getMessage());
+    var noName = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_DECODING_METHOD_BY_ENGINE", ":greedy_search")));
+    assertEquals("ASR_DECODING_METHOD_BY_ENGINE entries must be name:method: :greedy_search", noName.getMessage());
+    var duplicate = assertThrows(IllegalArgumentException.class,
+        () -> of(Map.of("ASR_DECODING_METHOD_BY_ENGINE", "reazon-ja:greedy_search,reazon-ja:modified_beam_search")));
+    assertEquals("ASR_DECODING_METHOD_BY_ENGINE names an engine twice: reazon-ja", duplicate.getMessage());
+  }
+
+  @Test void recognitionTunablesCanBeOverridden() {
+    var c = of(Map.of("ASR_MAX_ACTIVE_PATHS", "8", "ASR_SENSEVOICE_ITN", "FALSE", "ASR_NORMALIZE_SILENCE_DBFS", "-45.5"));
+    assertEquals(8, c.maxActivePaths());
+    assertFalse(c.sensevoiceItn());
+    assertEquals(-45.5f, c.normalizeSilenceDbfs());
+    assertTrue(of(Map.of("ASR_SENSEVOICE_ITN", "True")).sensevoiceItn());
+  }
+
+  @Test void recognitionTunablesOutsideTheirRangeAreRejected() {
+    for (String v : new String[] {"0", "-1"}) {
+      var e = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_MAX_ACTIVE_PATHS", v)));
+      assertEquals("ASR_MAX_ACTIVE_PATHS must be at least 1: " + v, e.getMessage());
+    }
+    assertEquals(1, of(Map.of("ASR_MAX_ACTIVE_PATHS", "1")).maxActivePaths());
+    assertEquals("ASR_NORMALIZE_SILENCE_DBFS must be a finite number <= 0: 1.0",
+        assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_NORMALIZE_SILENCE_DBFS", "1"))).getMessage());
+    for (String v : new String[] {"NaN", "Infinity", "-Infinity"})
+      assertTrue(assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_NORMALIZE_SILENCE_DBFS", v))).getMessage()
+          .startsWith("ASR_NORMALIZE_SILENCE_DBFS must be a finite number <= 0: "));
+    assertEquals(0f, of(Map.of("ASR_NORMALIZE_SILENCE_DBFS", "0")).normalizeSilenceDbfs());
+  }
+
+  @Test void invalidRecognitionTunablesAreRejectedNamingTheVariableAndValue() {
+    var paths = assertThrows(NumberFormatException.class, () -> of(Map.of("ASR_MAX_ACTIVE_PATHS", "many")));
+    assertEquals("ASR_MAX_ACTIVE_PATHS must be an integer: many", paths.getMessage());
+    var itn = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_SENSEVOICE_ITN", "maybe")));
+    assertEquals("ASR_SENSEVOICE_ITN must be true or false: maybe", itn.getMessage());
+    var silence = assertThrows(NumberFormatException.class, () -> of(Map.of("ASR_NORMALIZE_SILENCE_DBFS", "abc")));
+    assertEquals("ASR_NORMALIZE_SILENCE_DBFS must be a number: abc", silence.getMessage());
+  }
+
   @Test void invalidNumbersAreRejected() {
     var e = assertThrows(NumberFormatException.class, () -> of(Map.of("ASR_THREADS", "many")));
     assertTrue(e.getMessage().contains("ASR_THREADS"));

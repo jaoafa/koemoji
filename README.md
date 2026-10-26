@@ -77,6 +77,11 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 | `ASR_NORMALIZE_TARGET_DBFS` | `-20` | 正規化の目標 RMS(dBFS) |
 | `ASR_NORMALIZE_MAX_GAIN_DB` | `20` | 正規化で増幅するゲインの上限(dB)。減衰には効きません |
 | `ASR_NORMALIZE_PEAK` | `0.99` | 正規化後のピーク(絶対値)の上限 |
+| `ASR_NORMALIZE_SILENCE_DBFS` | `-60` | 正規化で、RMS がこの値(dBFS)未満の音声は増幅しない閾値。`ASR_NORMALIZE_ENGINES` のエンジンにだけ効きます |
+| `ASR_DECODING_METHOD` | `greedy_search` | 全エンジンの既定のデコード方式(`greedy_search`、`modified_beam_search`) |
+| `ASR_DECODING_METHOD_BY_ENGINE` | (空) | エンジン別のデコード方式。`name:method` のカンマ区切りで、例は `reazon-ja:modified_beam_search`。指定のないエンジンは `ASR_DECODING_METHOD` を使います |
+| `ASR_MAX_ACTIVE_PATHS` | `4` | `modified_beam_search` のビーム幅(1 以上)。`greedy_search` では使われません |
+| `ASR_SENSEVOICE_ITN` | `true` | sensevoice の逆テキスト正規化(`true`、`false`)。`false` にすると句読点が付かなくなります。他のエンジンには影響しません |
 | `PARTIAL_INTERVAL_MS` | `2000` | partial 認識の間隔 |
 | `MAX_UTTERANCE_MS` | `30000` | この長さで発話を確定し、続きを新しい発話として扱います |
 | `VAD_THRESHOLD` | `0.5` | Silero の発話確率のしきい値 |
@@ -85,7 +90,11 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 | `AUDIO_TTL_MIN` / `FAILED_AUDIO_TTL_MIN` | `30` / `1440` | すべての final が確定してから、音声を削除するまでの時間 |
 | `RETRY_MAX` / `RETRY_BACKOFF_MS` | `5` / `2000` | final ジョブの再試行回数と、指数バックオフの基準時間 |
 
-ASR に渡す前の音声には、正規化、パディングの順に処理を適用します。partial と final のどちらにも同じ処理がかかります。RMS が -60 dBFS 未満の音声は、ノイズから誤った文字が出るのを避けるため、正規化しても増幅しません。
+ASR に渡す前の音声には、正規化、パディングの順に処理を適用します。partial と final のどちらにも同じ処理がかかります。RMS が `ASR_NORMALIZE_SILENCE_DBFS`(既定 -60 dBFS)未満の音声は、ノイズから誤った文字が出るのを避けるため、正規化しても増幅しません。
+
+`modified_beam_search` が使えるのは transducer 系の `reazon-ja` と `reazon-ja-en` だけです。それ以外のエンジンに指定すると、起動時に拒否されます(sherpa-onnx は未対応の値でプロセスごと終了するため)。複数のエンジンを同時に動かすときは、`ASR_DECODING_METHOD_BY_ENGINE` でエンジンを指定してください。精度と CPU 負荷への効果は検証していないので、既定のまま使い、変えるときは replay で同じ発話を比べてから決めてください。replay はデコード方式を条件として振れないので、環境変数を変えて `--out` を分けて 2 回実行し、結果を比べます。出力にはデコード方式が記録されません。
+
+`modified_beam_search` では、`reazon-ja` と `reazon-ja-en` の確信度(認識結果に付く `(nnn%)`)が `greedy_search` と同じ意味にならず、同じ認識結果でも値が大きく変わることを確認しています。ビーム探索で確信度を使うときは、`greedy_search` の値と比べないでください。
 
 ### 保存済みの発話を再認識して比較する(replay)
 

@@ -38,22 +38,22 @@ class WorkerTest {
   }
 
   @Test void normalizeAttenuatesLoudAudioToTheTargetRms() {
-    assertAllEqual(0.1f, Worker.normalize(filled(0.5f, 100), -20f, 20f, 0.99f));
+    assertAllEqual(0.1f, Worker.normalize(filled(0.5f, 100), -20f, 20f, 0.99f, -60f));
   }
 
   @Test void normalizeAmplifiesQuietAudioToTheTargetRmsWhenTheGainCapAllows() {
-    assertAllEqual(0.1f, Worker.normalize(filled(0.01f, 100), -20f, 20f, 0.99f));
+    assertAllEqual(0.1f, Worker.normalize(filled(0.01f, 100), -20f, 20f, 0.99f, -60f));
   }
 
   @Test void normalizeStopsAmplifyingAtTheGainCap() {
-    assertAllEqual(0.03f, Worker.normalize(filled(0.003f, 100), -20f, 20f, 0.99f));
-    assertAllEqual(0.01f * (float) Math.pow(10, 6 / 20.0), Worker.normalize(filled(0.01f, 100), -20f, 6f, 0.99f));
+    assertAllEqual(0.03f, Worker.normalize(filled(0.003f, 100), -20f, 20f, 0.99f, -60f));
+    assertAllEqual(0.01f * (float) Math.pow(10, 6 / 20.0), Worker.normalize(filled(0.01f, 100), -20f, 6f, 0.99f, -60f));
   }
 
   @Test void normalizeKeepsThePeakAtOrBelowTheLimit() {
     float[] x = new float[100];
     x[0] = 0.5f;
-    float[] out = Worker.normalize(x, -20f, 20f, 0.99f);
+    float[] out = Worker.normalize(x, -20f, 20f, 0.99f, -60f);
     assertEquals(0.99f, out[0], TOLERANCE);
     float max = 0f;
     for (float v : out) max = Math.max(max, Math.abs(v));
@@ -61,25 +61,39 @@ class WorkerTest {
   }
 
   @Test void normalizeAmplifiesAudioJustAboveTheSilenceGuard() {
-    assertAllEqual(0.01953125f, Worker.normalize(filled(0.001953125f, 100), -20f, 20f, 0.99f));
+    assertAllEqual(0.01953125f, Worker.normalize(filled(0.001953125f, 100), -20f, 20f, 0.99f, -60f));
   }
 
   @Test void normalizeLeavesAudioJustBelowTheSilenceGuardUntouched() {
     float[] quiet = filled(0.0009765625f, 100);
-    assertSame(quiet, Worker.normalize(quiet, -20f, 20f, 0.99f));
+    assertSame(quiet, Worker.normalize(quiet, -20f, 20f, 0.99f, -60f));
+  }
+
+  @Test void normalizeSilenceGuardFollowsTheThreshold() {
+    float[] x = filled(0.01f, 100);
+    assertAllEqual(0.1f, Worker.normalize(x, -20f, 20f, 0.99f, -40.1f));
+    assertSame(x, Worker.normalize(x, -20f, 20f, 0.99f, -39.9f));
   }
 
   @Test void normalizeReturnsSilenceAndEmptyAudioAsIs() {
     float[] silence = new float[100];
-    assertSame(silence, Worker.normalize(silence, -20f, 20f, 0.99f));
+    assertSame(silence, Worker.normalize(silence, -20f, 20f, 0.99f, -60f));
     float[] empty = new float[0];
-    assertSame(empty, Worker.normalize(empty, -20f, 20f, 0.99f));
+    assertSame(empty, Worker.normalize(empty, -20f, 20f, 0.99f, -60f));
   }
 
   @Test void normalizeDoesNotModifyItsInput() {
     float[] x = filled(0.5f, 100);
-    Worker.normalize(x, -20f, 20f, 0.99f);
+    Worker.normalize(x, -20f, 20f, 0.99f, -60f);
     assertArrayEquals(filled(0.5f, 100), x);
+  }
+
+  @Test void preprocessUsesTheConfiguredSilenceGuard() {
+    float[] quiet = filled(0.01f, 100);
+    var amplify = of(Map.of("ASR_NORMALIZE_ENGINES", "sensevoice", "ASR_NORMALIZE_SILENCE_DBFS", "-60"));
+    assertAllEqual(0.1f, Worker.preprocess(quiet, amplify, "sensevoice"));
+    var guard = of(Map.of("ASR_NORMALIZE_ENGINES", "sensevoice", "ASR_NORMALIZE_SILENCE_DBFS", "-30"));
+    assertSame(quiet, Worker.preprocess(quiet, guard, "sensevoice"));
   }
 
   @Test void preprocessOnlyPadsEnginesWithoutNormalization() {

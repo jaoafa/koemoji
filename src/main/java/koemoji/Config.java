@@ -20,9 +20,13 @@ public record Config(
     int retryMax, int retryBackoffMs, String language, int padMs, boolean includeBots, int healthPort,
     String messageFormat, String updateSecret,
     Map<String, Integer> padMsByEngine, List<String> normalizeEngines,
-    float normalizeTargetDbfs, float normalizeMaxGainDb, float normalizePeak) {
+    float normalizeTargetDbfs, float normalizeMaxGainDb, float normalizePeak,
+    String decodingMethod, Map<String, String> decodingMethodByEngine, int maxActivePaths,
+    boolean sensevoiceItn, float normalizeSilenceDbfs) {
 
   public static final String DEFAULT_MESSAGE_FORMAT = "`{user}`: `{text}`";
+  public static final String GREEDY_SEARCH = "greedy_search";
+  public static final String MODIFIED_BEAM_SEARCH = "modified_beam_search";
 
   public static Config fromEnv() { return of(System::getenv); }
 
@@ -54,7 +58,39 @@ public record Config(
         names(s.apply("ASR_NORMALIZE_ENGINES", "")),
         parseFloat("ASR_NORMALIZE_TARGET_DBFS", s.apply("ASR_NORMALIZE_TARGET_DBFS", "-20")),
         parseFloat("ASR_NORMALIZE_MAX_GAIN_DB", s.apply("ASR_NORMALIZE_MAX_GAIN_DB", "20")),
-        parseFloat("ASR_NORMALIZE_PEAK", s.apply("ASR_NORMALIZE_PEAK", "0.99")));
+        parseFloat("ASR_NORMALIZE_PEAK", s.apply("ASR_NORMALIZE_PEAK", "0.99")),
+        decodingMethod("ASR_DECODING_METHOD", s.apply("ASR_DECODING_METHOD", GREEDY_SEARCH).trim()),
+        byEngine("ASR_DECODING_METHOD_BY_ENGINE", s.apply("ASR_DECODING_METHOD_BY_ENGINE", ""), "method",
+            (entry, method) -> decodingMethod("ASR_DECODING_METHOD_BY_ENGINE", method, entry)),
+        maxActivePaths(i.applyAsInt("ASR_MAX_ACTIVE_PATHS", 4)),
+        strictBoolean("ASR_SENSEVOICE_ITN", s.apply("ASR_SENSEVOICE_ITN", "true")),
+        silenceDbfs(parseFloat("ASR_NORMALIZE_SILENCE_DBFS", s.apply("ASR_NORMALIZE_SILENCE_DBFS", "-60"))));
+  }
+
+  /** replay は Main.validate を通らないので、新しい認識の設定の範囲は読み込み時に検証する。 */
+  private static int maxActivePaths(int v) {
+    if (v < 1) throw new IllegalArgumentException("ASR_MAX_ACTIVE_PATHS must be at least 1: " + v);
+    return v;
+  }
+
+  private static float silenceDbfs(float v) {
+    if (!Float.isFinite(v) || v > 0) throw new IllegalArgumentException("ASR_NORMALIZE_SILENCE_DBFS must be a finite number <= 0: " + v);
+    return v;
+  }
+
+  private static String decodingMethod(String key, String method) { return decodingMethod(key, method, method); }
+
+  private static String decodingMethod(String key, String method, String shown) {
+    if (!method.equals(GREEDY_SEARCH) && !method.equals(MODIFIED_BEAM_SEARCH))
+      throw new IllegalArgumentException(key + " must be " + GREEDY_SEARCH + " or " + MODIFIED_BEAM_SEARCH + ": " + shown);
+    return method;
+  }
+
+  /** {@code Boolean.parseBoolean} は不正な値を黙って false にするので使わない。 */
+  private static boolean strictBoolean(String key, String v) {
+    if (v.trim().equalsIgnoreCase("true")) return true;
+    if (v.trim().equalsIgnoreCase("false")) return false;
+    throw new IllegalArgumentException(key + " must be true or false: " + v);
   }
 
   private static float parseFloat(String key, String v) {
@@ -67,21 +103,28 @@ public record Config(
 
   public int padMsFor(String engine) { return padMsByEngine.getOrDefault(engine, padMs); }
   public boolean normalizes(String engine) { return normalizeEngines.contains(engine); }
+  public String decodingMethodFor(String engine) { return decodingMethodByEngine.getOrDefault(engine, decodingMethod); }
 
   private static List<String> names(String v) {
     return Arrays.stream(v.split(",")).map(String::trim).filter(n -> !n.isEmpty()).toList();
   }
 
   private static Map<String, Integer> padByEngine(String key, String v) {
-    var out = new LinkedHashMap<String, Integer>();
+    return byEngine(key, v, "ms", (entry, ms) -> {
+      try { return Integer.parseInt(ms); }
+      catch (NumberFormatException ex) { throw new NumberFormatException(key + " ms must be an integer: " + entry); }
+    });
+  }
+
+  /** parse には、要素の全体(エラーメッセージ用)と、コロンより後ろの値を渡す。 */
+  private static <T> Map<String, T> byEngine(String key, String v, String valueName, BiFunction<String, String, T> parse) {
+    var out = new LinkedHashMap<String, T>();
     for (String e : names(v)) {
       int colon = e.indexOf(':');
       String name = colon < 0 ? "" : e.substring(0, colon).trim();
-      if (name.isEmpty()) throw new IllegalArgumentException(key + " entries must be name:ms: " + e);
-      int ms;
-      try { ms = Integer.parseInt(e.substring(colon + 1).trim()); }
-      catch (NumberFormatException ex) { throw new NumberFormatException(key + " ms must be an integer: " + e); }
-      if (out.put(name, ms) != null) throw new IllegalArgumentException(key + " names an engine twice: " + name);
+      if (name.isEmpty()) throw new IllegalArgumentException(key + " entries must be name:" + valueName + ": " + e);
+      if (out.put(name, parse.apply(e, e.substring(colon + 1).trim())) != null)
+        throw new IllegalArgumentException(key + " names an engine twice: " + name);
     }
     return Collections.unmodifiableMap(out);
   }
