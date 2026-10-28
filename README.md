@@ -81,6 +81,7 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 | `ASR_DECODING_METHOD` | `greedy_search` | 全エンジンの既定のデコード方式(`greedy_search`、`modified_beam_search`) |
 | `ASR_DECODING_METHOD_BY_ENGINE` | (空) | エンジン別のデコード方式。`name:method` のカンマ区切りで、例は `reazon-ja:modified_beam_search`。指定のないエンジンは `ASR_DECODING_METHOD` を使います |
 | `ASR_MAX_ACTIVE_PATHS` | `4` | `modified_beam_search` のビーム幅(1 以上)。`greedy_search` では使われません |
+| `ASR_BLANK_PENALTY_BY_ENGINE` | (空) | エンジン別の blank penalty。`name:value` のカンマ区切りで、`value` は有限の 0 以上の数、例は `reazon-ja:1.0`。指定のないエンジンは 0(blank penalty なし)です |
 | `ASR_SENSEVOICE_ITN` | `true` | sensevoice の逆テキスト正規化(`true`、`false`)。`false` にすると句読点が付かなくなります。他のエンジンには影響しません |
 | `PARTIAL_INTERVAL_MS` | `2000` | partial 認識の間隔 |
 | `MAX_UTTERANCE_MS` | `30000` | この長さで発話を確定し、続きを新しい発話として扱います |
@@ -93,6 +94,8 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 ASR に渡す前の音声には、正規化、パディングの順に処理を適用します。partial と final のどちらにも同じ処理がかかります。RMS が `ASR_NORMALIZE_SILENCE_DBFS`(既定 -60 dBFS)未満の音声は、ノイズから誤った文字が出るのを避けるため、正規化しても増幅しません。
 
 `modified_beam_search` が使えるのは transducer 系の `reazon-ja` と `reazon-ja-en` だけです。それ以外のエンジンに指定すると、起動時に拒否されます(sherpa-onnx は未対応の値でプロセスごと終了するため)。複数のエンジンを同時に動かすときは、`ASR_DECODING_METHOD_BY_ENGINE` でエンジンを指定してください。精度と CPU 負荷への効果は検証していないので、既定のまま使い、変えるときは replay で同じ発話を比べてから決めてください。replay はデコード方式を条件として振れないので、環境変数を変えて `--out` を分けて 2 回実行し、結果を比べます。出力にはデコード方式が記録されません。
+
+blank penalty は、transducer 系の `reazon-ja` と `reazon-ja-en` だけで使えます。それ以外のエンジンに 0 より大きい値を指定すると、黙って無視されるのを避けるため、起動時に拒否されます。発話の先頭や末尾の語が落ちるときに、`ASR_PAD_MS_BY_ENGINE` を増やす方法と併用すると改善する場合があります。効果は音声や sherpa-onnx のバージョンで変わるので、変えるときは replay で、環境変数を変えて `--out` を分けて 2 回実行し、同じ発話を比べてから決めてください。blank penalty を変えると、確信度(認識結果に付く `(nnn%)`)も変わります(試した例では少し下がりました)。設定の異なる確信度の値を、単純に比べないでください。
 
 `modified_beam_search` では、`reazon-ja` と `reazon-ja-en` の確信度(認識結果に付く `(nnn%)`)が `greedy_search` と同じ意味にならず、同じ認識結果でも値が大きく変わることを確認しています。ビーム探索で確信度を使うときは、`greedy_search` の値と比べないでください。
 

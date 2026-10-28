@@ -38,11 +38,19 @@ public final class SherpaEngine implements AsrEngine {
           + " (transducer engines only: " + TRANSDUCER_ENGINES + ")");
   }
 
+  /** blank penalty が効くのは transducer 系だけで、他のエンジンでは黙って無視されるので、起動時に弾く。 */
+  public static void requireBlankPenalty(String engine, float penalty) {
+    if (penalty > 0 && !TRANSDUCER_ENGINES.contains(engine))
+      throw new IllegalArgumentException("Blank penalty " + penalty + " is not supported by engine " + engine
+          + " (transducer engines only: " + TRANSDUCER_ENGINES + ")");
+  }
+
   public SherpaEngine(String name, Config c) {
     this.name = name;
     String sub = DIRS.get(name);
     if (sub == null) throw new IllegalArgumentException("Unknown engine: " + name + " (known: " + DIRS.keySet() + ")");
     requireDecoding(name, c.decodingMethodFor(name));
+    requireBlankPenalty(name, c.blankPenaltyFor(name));
     Path d = c.modelsDir().resolve(sub);
     var mc = OfflineModelConfig.builder().setNumThreads(c.asrThreads()).setDebug(false).setProvider("cpu");
     switch (name) {
@@ -72,7 +80,8 @@ public final class SherpaEngine implements AsrEngine {
       default -> throw new IllegalStateException(name);
     }
     rec = new OfflineRecognizer(OfflineRecognizerConfig.builder().setOfflineModelConfig(mc.build())
-        .setDecodingMethod(c.decodingMethodFor(name)).setMaxActivePaths(c.maxActivePaths()).build());
+        .setDecodingMethod(c.decodingMethodFor(name)).setMaxActivePaths(c.maxActivePaths())
+        .setBlankPenalty(c.blankPenaltyFor(name)).build());
   }
 
   private static String find(Path dir, String glob) {

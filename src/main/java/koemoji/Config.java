@@ -22,7 +22,7 @@ public record Config(
     Map<String, Integer> padMsByEngine, List<String> normalizeEngines,
     float normalizeTargetDbfs, float normalizeMaxGainDb, float normalizePeak,
     String decodingMethod, Map<String, String> decodingMethodByEngine, int maxActivePaths,
-    boolean sensevoiceItn, float normalizeSilenceDbfs) {
+    boolean sensevoiceItn, float normalizeSilenceDbfs, Map<String, Float> blankPenaltyByEngine) {
 
   public static final String DEFAULT_MESSAGE_FORMAT = "`{user}`: `{text}`";
   public static final String GREEDY_SEARCH = "greedy_search";
@@ -64,7 +64,18 @@ public record Config(
             (entry, method) -> decodingMethod("ASR_DECODING_METHOD_BY_ENGINE", method, entry)),
         maxActivePaths(i.applyAsInt("ASR_MAX_ACTIVE_PATHS", 4)),
         strictBoolean("ASR_SENSEVOICE_ITN", s.apply("ASR_SENSEVOICE_ITN", "true")),
-        silenceDbfs(parseFloat("ASR_NORMALIZE_SILENCE_DBFS", s.apply("ASR_NORMALIZE_SILENCE_DBFS", "-60"))));
+        silenceDbfs(parseFloat("ASR_NORMALIZE_SILENCE_DBFS", s.apply("ASR_NORMALIZE_SILENCE_DBFS", "-60"))),
+        blankPenaltyByEngine("ASR_BLANK_PENALTY_BY_ENGINE", s.apply("ASR_BLANK_PENALTY_BY_ENGINE", "")));
+  }
+
+  private static Map<String, Float> blankPenaltyByEngine(String key, String v) {
+    return byEngine(key, v, "value", (entry, value) -> {
+      float penalty;
+      try { penalty = Float.parseFloat(value); }
+      catch (NumberFormatException e) { throw new NumberFormatException(key + " value must be a number: " + entry); }
+      if (!Float.isFinite(penalty) || penalty < 0) throw new IllegalArgumentException(key + " must be a finite number >= 0: " + entry);
+      return penalty;
+    });
   }
 
   /** replay は Main.validate を通らないので、新しい認識の設定の範囲は読み込み時に検証する。 */
@@ -104,6 +115,7 @@ public record Config(
   public int padMsFor(String engine) { return padMsByEngine.getOrDefault(engine, padMs); }
   public boolean normalizes(String engine) { return normalizeEngines.contains(engine); }
   public String decodingMethodFor(String engine) { return decodingMethodByEngine.getOrDefault(engine, decodingMethod); }
+  public float blankPenaltyFor(String engine) { return blankPenaltyByEngine.getOrDefault(engine, 0f); }
 
   private static List<String> names(String v) {
     return Arrays.stream(v.split(",")).map(String::trim).filter(n -> !n.isEmpty()).toList();

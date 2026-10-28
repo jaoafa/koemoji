@@ -59,6 +59,25 @@ class MainTest {
         "ASR_DECODING_METHOD", "modified_beam_search"))));
   }
 
+  @Test void validateRejectsAnUnknownEngineInTheBlankPenaltyList() throws Exception {
+    assertRejected(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", "nope:1.0"),
+        "Unknown engine: nope in ASR_BLANK_PENALTY_BY_ENGINE (known: " + SherpaEngine.DIRS.keySet() + ")");
+  }
+
+  @Test void validateRejectsABlankPenaltyTheWorkersCannotUse() throws Exception {
+    var unsupported = "Blank penalty 1.0 is not supported by engine sensevoice (transducer engines only: [reazon-ja, reazon-ja-en])";
+    assertRejected(Map.of("ASR_ENGINES", "sensevoice,reazon-ja", "ASR_BLANK_PENALTY_BY_ENGINE", "sensevoice:1.0"), unsupported);
+    assertDoesNotThrow(() -> Main.validate(config(Map.of("ASR_ENGINES", "sensevoice,reazon-ja",
+        "ASR_BLANK_PENALTY_BY_ENGINE", "reazon-ja:1.0,sensevoice:0"))));
+  }
+
+  @Test void validateChecksTheBlankPenaltyOnlyForEnginesThisProcessRuns() throws Exception {
+    assertDoesNotThrow(() -> Main.validate(config(Map.of("MODE", "worker", "ASR_ENGINES", "sensevoice,reazon-ja",
+        "WORKER_ENGINES", "reazon-ja", "ASR_BLANK_PENALTY_BY_ENGINE", "sensevoice:1.0"))));
+    assertDoesNotThrow(() -> Main.validate(config(Map.of("MODE", "capture", "ASR_ENGINES", "sensevoice",
+        "ASR_BLANK_PENALTY_BY_ENGINE", "sensevoice:1.0"))));
+  }
+
   @Test void validateRejectsConfigsThatWouldDoNothing() throws Exception {
     assertThrows(IllegalStateException.class, () -> Main.validate(config(Map.of("ASR_ENGINES", ","))));
     assertThrows(IllegalStateException.class, () -> Main.validate(config(Map.of("MODE", "worker", "WORKER_ENGINES", "sensevoice:0"))));

@@ -29,6 +29,19 @@ class SherpaEngineDecodingTest {
     }
   }
 
+  @Test void blankPenaltyOfZeroIsAcceptedByEveryEngine() {
+    for (String engine : SherpaEngine.DIRS.keySet()) assertDoesNotThrow(() -> SherpaEngine.requireBlankPenalty(engine, 0f));
+  }
+
+  @Test void aPositiveBlankPenaltyIsAcceptedOnlyByTransducerEngines() {
+    for (String engine : TRANSDUCERS) assertDoesNotThrow(() -> SherpaEngine.requireBlankPenalty(engine, 1.0f));
+    for (String engine : OTHERS) {
+      var e = assertThrows(IllegalArgumentException.class, () -> SherpaEngine.requireBlankPenalty(engine, 0.5f));
+      assertEquals("Blank penalty 0.5 is not supported by engine " + engine
+          + " (transducer engines only: [reazon-ja, reazon-ja-en])", e.getMessage());
+    }
+  }
+
   @Test void everyEngineIsClassifiedAsTransducerOrNot() {
     var all = new java.util.TreeSet<>(SherpaEngine.DIRS.keySet());
     var classified = new java.util.TreeSet<String>();
