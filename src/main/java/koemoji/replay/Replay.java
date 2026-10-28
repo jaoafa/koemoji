@@ -2,6 +2,7 @@ package koemoji.replay;
 
 import koemoji.Config;
 import koemoji.asr.AsrEngine;
+import koemoji.asr.AsrEngine.Result;
 import koemoji.asr.Models;
 import koemoji.asr.Worker;
 import koemoji.replay.ReplayArgs.Condition;
@@ -84,7 +85,9 @@ public final class Replay {
         var saved = texts.get("saved/" + s.getKey());
         if (saved != null) saved.put(u.id(), s.getValue());
       }
-    for (String engine : args.engines()) recognize(args, env, factory, engine, conditions, replayed, texts, err);
+    var confidences = new LinkedHashMap<String, Map<String, Result>>();
+    conditions.forEach(c -> confidences.put(c.name(), new HashMap<>()));
+    for (String engine : args.engines()) recognize(args, env, factory, engine, conditions, replayed, texts, confidences, err);
 
     var norm = new HashMap<String, Map<String, String>>();
     texts.forEach((name, byId) -> {
@@ -159,7 +162,16 @@ public final class Replay {
         if (text != null) disagreements.append(id).append('\t').append(f("%.4f", maxDisagreement.get(id))).append('\t').append(name).append('\t').append(oneLine(text)).append('\n');
       }
 
+    var confidence = new StringBuilder("utterance_id\tcondition\tlog_prob_sum\tscored_tokens\n");
+    for (Utterance u : replayed)
+      for (String name : names) {
+        Result r = confidences.get(name).get(u.id());
+        if (r != null && r.scoredTokenCount() > 0)
+          confidence.append(u.id()).append('\t').append(name).append('\t').append(r.logProbabilitySum()).append('\t').append(r.scoredTokenCount()).append('\n');
+      }
+
     Files.writeString(args.outDir().resolve("summary.md"), summary, StandardCharsets.UTF_8);
+    Files.writeString(args.outDir().resolve("confidence.tsv"), confidence, StandardCharsets.UTF_8);
     Files.writeString(args.outDir().resolve("utterances.tsv"), utterances, StandardCharsets.UTF_8);
     Files.writeString(args.outDir().resolve("disagreements.tsv"), disagreements, StandardCharsets.UTF_8);
     stdout.print(summary);
@@ -167,7 +179,7 @@ public final class Replay {
 
   private static void recognize(ReplayArgs args, Function<String, String> env, EngineFactory factory, String engine,
                                 List<Condition> conditions, List<Utterance> replayed, Map<String, Map<String, String>> texts,
-                                PrintStream err) {
+                                Map<String, Map<String, Result>> confidences, PrintStream err) {
     var mine = conditions.stream().filter(c -> !c.saved() && c.engine().equals(engine)).toList();
     var configs = new HashMap<String, Config>();
     mine.forEach(c -> configs.put(c.name(), ReplayArgs.conditionConfig(env, c)));
@@ -177,7 +189,9 @@ public final class Replay {
         float[] samples = readAudio(args, u);
         for (Condition c : mine) {
           try {
-            texts.get(c.name()).put(u.id(), Worker.recognize(asr, samples, configs.get(c.name()), engine, true).text());
+            Result result = Worker.recognize(asr, samples, configs.get(c.name()), engine, true);
+            texts.get(c.name()).put(u.id(), result.text());
+            confidences.get(c.name()).put(u.id(), result);
           } catch (RuntimeException e) {
             throw new IllegalStateException("Recognition failed for utterance " + u.id() + " under " + c.name() + ": " + e, e);
           }

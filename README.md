@@ -83,7 +83,7 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 | `ASR_MAX_ACTIVE_PATHS` | `4` | `modified_beam_search` のビーム幅(1 以上)。`greedy_search` では使われません |
 | `ASR_BLANK_PENALTY_BY_ENGINE` | (空) | エンジン別の blank penalty。`name:value` のカンマ区切りで、`value` は有限の 0 以上の数、例は `reazon-ja:1.0`。指定のないエンジンは 0(blank penalty なし)です |
 | `ASR_MIN_PEAK` | `0.05` | 発話全体の最大振幅(絶対値、0 以上 1 以下)がこの値未満の発話は、認識せずに破棄して投稿しません。`0` で無効です |
-| `ASR_MIN_AVG_LOG_PROB_BY_ENGINE` | (空) | エンジン別の、確信度のしきい値(平均対数確率)。`name:value` のカンマ区切りで、`value` は有限の 0 以下の数、例は `reazon-ja:-0.5`。しきい値を下回る出力は、そのエンジンの結果だけ破棄します。空なら無効です |
+| `ASR_MIN_AVG_LOG_PROB_BY_ENGINE` | (空) | エンジン別の、確信度のしきい値(平均対数確率)。`name:value` のカンマ区切りで、`value` は有限の 0 以下の数、例は `reazon-ja:-0.5`。しきい値を下回る出力は、そのエンジンの結果だけ破棄します。確信度が得られるのは `reazon-ja`、`reazon-ja-en`、`parakeet-ja`、`sensevoice`、`dolphin-small` です。空なら無効です |
 | `ASR_SENSEVOICE_ITN` | `true` | sensevoice の逆テキスト正規化(`true`、`false`)。`false` にすると句読点が付かなくなります。他のエンジンには影響しません |
 | `PARTIAL_INTERVAL_MS` | `2000` | partial 認識の間隔 |
 | `MAX_UTTERANCE_MS` | `30000` | この長さで発話を確定し、続きを新しい発話として扱います |
@@ -100,6 +100,8 @@ ASR に渡す前の音声には、正規化、パディングの順に処理を�
 blank penalty は、transducer 系の `reazon-ja` と `reazon-ja-en` だけで使えます。それ以外のエンジンに 0 より大きい値を指定すると、黙って無視されるのを避けるため、起動時に拒否されます。発話の先頭や末尾の語が落ちるときに、`ASR_PAD_MS_BY_ENGINE` を増やす方法と併用すると改善する場合があります。効果は音声や sherpa-onnx のバージョンで変わるので、変えるときは replay で、環境変数を変えて `--out` を分けて 2 回実行し、同じ発話を比べてから決めてください。blank penalty を変えると、確信度(認識結果に付く `(nnn%)`)も変わります(試した例では少し下がりました)。設定の異なる確信度の値を、単純に比べないでください。
 
 ほぼ無音の発話は、ASR が幻覚の文字列を出すので、投稿する前に破棄します。最大振幅は、正規化の前の音声で測ります。確信度の判定は、`ASR_MIN_AVG_LOG_PROB_BY_ENGINE` に挙げたエンジンの出力だけに働き、発話全体は破棄しません。確信度が得られないエンジンには効きません。確信度の値は blank penalty や `modified_beam_search` で変わるので、しきい値を決めるときは replay で同じ発話を比べてください。replay も同じ判定を適用します。ただし replay の `empty` 列は、破棄された発話と、ASR がもともと空文字を返した発話を区別せずに数えます。破棄された発話の元のテキストを見るときは、`ASR_MIN_PEAK=0` で実行し、`ASR_MIN_AVG_LOG_PROB_BY_ENGINE` を設定しているときは、これも空にして実行してください。
+
+`parakeet-ja` と `sensevoice` の確信度は CTC の各フレームの確率から求めるので、`reazon-ja` と値のスケールが異なります。`reazon-ja` のしきい値を流用せず、エンジンごとに replay の `confidence.tsv` を使って決めてください。`dolphin-small` も同じ CTC のデコーダを通るので確信度が付きますが、値が誤認識の目安になるかは検証していません。`whisper-small`、`whisper-turbo`、`qwen3-asr` は確信度を取得しておらず、しきい値は効きません。
 
 `modified_beam_search` では、`reazon-ja` と `reazon-ja-en` の確信度(認識結果に付く `(nnn%)`)が `greedy_search` と同じ意味にならず、同じ認識結果でも値が大きく変わることを確認しています。ビーム探索で確信度を使うときは、`greedy_search` の値と比べないでください。
 
@@ -142,6 +144,7 @@ docker compose run --rm koemoji replay \
 | `summary.md` | 条件ごとの件数、空の結果の件数、文字数、CER、条件の対ごとの平均不一致率、不一致の大きい発話の一覧。文字起こしの本文は含みません |
 | `utterances.tsv` | 発話ごと・条件ごとの認識結果 |
 | `disagreements.tsv` | 不一致の大きい発話の、全条件の認識結果 |
+| `confidence.tsv` | 発話ごと・条件ごとの、確信度の合計(`log_prob_sum`)と対象のトークン数(`scored_tokens`)。平均対数確率は、合計をトークン数で割った値です。確信度が得られない結果と、`saved/` の条件は、行を出しません。本文は含みません |
 
 不一致率は、2 つの結果を NFKC で正規化し、句読点・記号・空白を除いたうえで、コードポイント単位のレーベンシュタイン距離を長い方の長さで割った値です。条件の対の平均は、両方の結果がある発話について取ります。
 

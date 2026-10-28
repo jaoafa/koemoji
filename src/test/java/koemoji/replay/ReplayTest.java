@@ -107,7 +107,7 @@ class ReplayTest {
     assertEquals(0, run(discarding, Map.of(), args), stderr());
     assertEquals(List.of(32), discarding.engines.get(0).seen);
     assertTrue(stdout().contains("| sensevoice/pad0/normoff | 2 | 1 | 6 | - | - |\n"), stdout());
-    for (String file : List.of("summary.md", "utterances.tsv", "disagreements.tsv")) Files.delete(out.resolve(file));
+    for (String file : List.of("summary.md", "utterances.tsv", "disagreements.tsv", "confidence.tsv")) Files.delete(out.resolve(file));
     stdout.reset();
     var keeping = new Factory(false);
     assertEquals(0, run(keeping, Map.of("ASR_MIN_PEAK", "0"), args), stderr());
@@ -171,6 +171,24 @@ class ReplayTest {
         """, read("disagreements.tsv"));
     assertFalse(stdout().contains("n32m25"));
     assertTrue(factory.engines.get(0).closed);
+  }
+
+  @Test void confidenceIsWrittenOnlyForResultsThatHaveIt() throws Exception {
+    write("u1", pcm(32, QUARTER));
+    write("u2", pcm(32, HALF));
+    Replay.EngineFactory factory = (engine, c) -> new AsrEngine() {
+      @Override public Capabilities capabilities() { return new Capabilities("dummy", false, 30, false); }
+      @Override public Result recognizePartial(float[] samples) { throw new UnsupportedOperationException(); }
+      @Override public Result recognizeFinal(float[] samples) {
+        return samples[0] == 0.25f ? new Result("あ", -1.5, 3) : new Result("い", 0, 0);
+      }
+      @Override public void close() {}
+    };
+    assertEquals(0, run(factory, Map.of(), "--engines", "sensevoice", "--pad-ms", "0", "--normalize", "off"), stderr());
+    assertEquals("""
+        utterance_id\tcondition\tlog_prob_sum\tscored_tokens
+        u1\tsensevoice/pad0/normoff\t-1.5\t3
+        """, read("confidence.tsv"));
   }
 
   @Test void normalizationChangesWhatTheEngineHears() throws Exception {
