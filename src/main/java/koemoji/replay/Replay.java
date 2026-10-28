@@ -177,7 +177,7 @@ public final class Replay {
         float[] samples = readAudio(args, u);
         for (Condition c : mine) {
           try {
-            texts.get(c.name()).put(u.id(), asr.recognizeFinal(Worker.preprocess(samples, configs.get(c.name()), engine)).text());
+            texts.get(c.name()).put(u.id(), Worker.recognize(asr, samples, configs.get(c.name()), engine, true).text());
           } catch (RuntimeException e) {
             throw new IllegalStateException("Recognition failed for utterance " + u.id() + " under " + c.name() + ": " + e, e);
           }

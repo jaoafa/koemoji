@@ -92,9 +92,9 @@ public final class Worker {
 
   private static void run(Config c, Db db, String id, AsrEngine engine, String engineName, Db.Job j) {
     try {
-      float[] pcm = preprocess(read(j.audioPath(), j.snapshotBytes()), c, engineName);
+      float[] raw = read(j.audioPath(), j.snapshotBytes());
       long t = System.nanoTime();
-      AsrEngine.Result result = j.isFinal() ? engine.recognizeFinal(pcm) : engine.recognizePartial(pcm);
+      AsrEngine.Result result = recognize(engine, raw, c, engineName, j.isFinal());
       long took = System.nanoTime() - t;
       db.complete(j.id(), id, result.text(), result.logProbabilitySum(), result.scoredTokenCount());
       stats.merge(engineName + "|" + (j.isFinal() ? "final" : "partial"), new long[] {1, took},
@@ -103,6 +103,26 @@ public final class Worker {
       log.warn("job {} failed (retry {})", j.id(), j.retryCount(), e);
       db.fail(j, id, String.valueOf(e), c.retryMax(), c.retryBackoffMs());
     }
+  }
+
+  /**
+   * {@code raw} を認識する。ほぼ無音の音声と、エンジンにしきい値があるときの平均対数確率がそれ未満の出力は、
+   * 空の結果を返す (表示されない)。ほぼ無音かどうかは正規化の前の音声で判定し、その場合はエンジンを実行しない。
+   */
+  public static AsrEngine.Result recognize(AsrEngine engine, float[] raw, Config c, String engineName, boolean isFinal) {
+    var discarded = new AsrEngine.Result("", 0, 0);
+    if (peak(raw) < c.minPeak()) return discarded;
+    float[] pcm = preprocess(raw, c, engineName);
+    AsrEngine.Result result = isFinal ? engine.recognizeFinal(pcm) : engine.recognizePartial(pcm);
+    boolean lowConfidence = result.scoredTokenCount() > 0
+        && result.logProbabilitySum() / result.scoredTokenCount() < c.minAvgLogProbFor(engineName);
+    return lowConfidence ? discarded : result;
+  }
+
+  public static float peak(float[] x) {
+    float max = 0;
+    for (float v : x) max = Math.max(max, Math.abs(v));
+    return max;
   }
 
   public static float[] preprocess(float[] x, Config c, String engine) {

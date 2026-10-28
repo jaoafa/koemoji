@@ -118,6 +118,78 @@ class WorkerTest {
     assertEquals(4 + 2 * 4800, Worker.preprocess(x, c, "sensevoice").length);
   }
 
+  private static final class RecordingEngine implements AsrEngine {
+    final java.util.List<String> calls = new java.util.ArrayList<>();
+    final java.util.List<Float> peaks = new java.util.ArrayList<>();
+    final Result result;
+
+    RecordingEngine(Result result) { this.result = result; }
+
+    @Override public Capabilities capabilities() { return new Capabilities("recording", false, 30, false); }
+    @Override public Result recognizePartial(float[] samples) { return record("partial", samples); }
+    @Override public Result recognizeFinal(float[] samples) { return record("final", samples); }
+    @Override public void close() {}
+
+    private Result record(String kind, float[] samples) {
+      calls.add(kind);
+      peaks.add(Worker.peak(samples));
+      return result;
+    }
+  }
+
+  private static final AsrEngine.Result DISCARDED = new AsrEngine.Result("", 0, 0);
+
+  @Test void peakIsTheLargestAbsoluteSampleAndZeroForEmptyAudio() {
+    assertEquals(0f, Worker.peak(new float[0]));
+    assertEquals(0.5f, Worker.peak(new float[] {0.25f, -0.5f, 0.1f}));
+  }
+
+  @Test void recognizeDiscardsAudioWhosePeakIsBelowTheThresholdWithoutRunningTheEngine() {
+    var engine = new RecordingEngine(new AsrEngine.Result("あれ", -1, 2));
+    var c = of(Map.of("ASR_MIN_PEAK", "0.25"));
+    assertEquals(DISCARDED, Worker.recognize(engine, filled(0.2f, 10), c, "reazon-ja", true));
+    assertEquals(DISCARDED, Worker.recognize(engine, filled(-0.2f, 10), c, "reazon-ja", false));
+    assertEquals(java.util.List.of(), engine.calls);
+  }
+
+  @Test void recognizeKeepsAudioWhosePeakEqualsTheThreshold() {
+    var result = new AsrEngine.Result("こんにちは", -1, 5);
+    var engine = new RecordingEngine(result);
+    assertSame(result, Worker.recognize(engine, filled(0.25f, 10), of(Map.of("ASR_MIN_PEAK", "0.25")), "sensevoice", true));
+    assertEquals(java.util.List.of("final"), engine.calls);
+  }
+
+  @Test void recognizeWithAZeroPeakThresholdRunsTheEngineOnSilence() {
+    var result = new AsrEngine.Result("あ", -1, 1);
+    var engine = new RecordingEngine(result);
+    assertSame(result, Worker.recognize(engine, new float[10], of(Map.of("ASR_MIN_PEAK", "0")), "sensevoice", false));
+    assertEquals(java.util.List.of("partial"), engine.calls);
+  }
+
+  @Test void recognizeJudgesThePeakBeforeNormalizationAmplifiesIt() {
+    var engine = new RecordingEngine(new AsrEngine.Result("あれ", -1, 2));
+    var c = of(Map.of("ASR_NORMALIZE_ENGINES", "sensevoice"));
+    assertEquals(DISCARDED, Worker.recognize(engine, filled(0.04f, 100), c, "sensevoice", true));
+    assertEquals(java.util.List.of(), engine.calls);
+    Worker.recognize(engine, filled(0.06f, 100), c, "sensevoice", true);
+    assertEquals(java.util.List.of(0.1f), engine.peaks);
+  }
+
+  @Test void recognizeDiscardsOnlyOutputBelowTheEnginesMeanLogProbability() {
+    var c = of(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "reazon-ja:-0.5"));
+    float[] speech = filled(0.5f, 10);
+    var low = new RecordingEngine(new AsrEngine.Result("あれ", -1.01, 2));
+    assertEquals(DISCARDED, Worker.recognize(low, speech, c, "reazon-ja", true));
+    assertEquals(DISCARDED, Worker.recognize(low, speech, c, "reazon-ja", false));
+    assertEquals(java.util.List.of("final", "partial"), low.calls);
+    var boundary = new AsrEngine.Result("あれ", -1.0, 2);
+    assertSame(boundary, Worker.recognize(new RecordingEngine(boundary), speech, c, "reazon-ja", true));
+    var otherEngine = new AsrEngine.Result("あれ", -10, 2);
+    assertSame(otherEngine, Worker.recognize(new RecordingEngine(otherEngine), speech, c, "sensevoice", true));
+    var unscored = new AsrEngine.Result("あれ", 0, 0);
+    assertSame(unscored, Worker.recognize(new RecordingEngine(unscored), speech, c, "reazon-ja", true));
+  }
+
   @Test void preprocessWithoutNewSettingsMatchesThePlainPad() {
     var c = of(Map.of("ASR_PAD_MS", "300"));
     float[] x = filled(0.25f, 8);

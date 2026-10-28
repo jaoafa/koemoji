@@ -22,7 +22,8 @@ public record Config(
     Map<String, Integer> padMsByEngine, List<String> normalizeEngines,
     float normalizeTargetDbfs, float normalizeMaxGainDb, float normalizePeak,
     String decodingMethod, Map<String, String> decodingMethodByEngine, int maxActivePaths,
-    boolean sensevoiceItn, float normalizeSilenceDbfs, Map<String, Float> blankPenaltyByEngine) {
+    boolean sensevoiceItn, float normalizeSilenceDbfs, Map<String, Float> blankPenaltyByEngine,
+    float minPeak, Map<String, Float> minAvgLogProbByEngine) {
 
   public static final String DEFAULT_MESSAGE_FORMAT = "`{user}`: `{text}`";
   public static final String GREEDY_SEARCH = "greedy_search";
@@ -65,7 +66,24 @@ public record Config(
         maxActivePaths(i.applyAsInt("ASR_MAX_ACTIVE_PATHS", 4)),
         strictBoolean("ASR_SENSEVOICE_ITN", s.apply("ASR_SENSEVOICE_ITN", "true")),
         silenceDbfs(parseFloat("ASR_NORMALIZE_SILENCE_DBFS", s.apply("ASR_NORMALIZE_SILENCE_DBFS", "-60"))),
-        blankPenaltyByEngine("ASR_BLANK_PENALTY_BY_ENGINE", s.apply("ASR_BLANK_PENALTY_BY_ENGINE", "")));
+        blankPenaltyByEngine("ASR_BLANK_PENALTY_BY_ENGINE", s.apply("ASR_BLANK_PENALTY_BY_ENGINE", "")),
+        minPeak(parseFloat("ASR_MIN_PEAK", s.apply("ASR_MIN_PEAK", "0.05"))),
+        minAvgLogProbByEngine("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", s.apply("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "")));
+  }
+
+  private static Map<String, Float> minAvgLogProbByEngine(String key, String v) {
+    return byEngine(key, v, "value", (entry, value) -> {
+      float threshold;
+      try { threshold = Float.parseFloat(value); }
+      catch (NumberFormatException e) { throw new NumberFormatException(key + " value must be a number: " + entry); }
+      if (!Float.isFinite(threshold) || threshold > 0) throw new IllegalArgumentException(key + " must be a finite number <= 0: " + entry);
+      return threshold;
+    });
+  }
+
+  private static float minPeak(float v) {
+    if (!Float.isFinite(v) || v < 0 || v > 1) throw new IllegalArgumentException("ASR_MIN_PEAK must be a finite number in [0, 1]: " + v);
+    return v;
   }
 
   private static Map<String, Float> blankPenaltyByEngine(String key, String v) {
@@ -116,6 +134,7 @@ public record Config(
   public boolean normalizes(String engine) { return normalizeEngines.contains(engine); }
   public String decodingMethodFor(String engine) { return decodingMethodByEngine.getOrDefault(engine, decodingMethod); }
   public float blankPenaltyFor(String engine) { return blankPenaltyByEngine.getOrDefault(engine, 0f); }
+  public float minAvgLogProbFor(String engine) { return minAvgLogProbByEngine.getOrDefault(engine, Float.NEGATIVE_INFINITY); }
 
   private static List<String> names(String v) {
     return Arrays.stream(v.split(",")).map(String::trim).filter(n -> !n.isEmpty()).toList();

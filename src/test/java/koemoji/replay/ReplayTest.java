@@ -99,6 +99,22 @@ class ReplayTest {
     write("u3", pcm(32, THREE_QUARTERS));
   }
 
+  @Test void discardsNearSilentUtterancesUnlessThePeakThresholdIsZero() throws Exception {
+    write("loud", pcm(32, QUARTER));
+    write("quiet", pcm(32, (short) 1000));
+    var args = new String[] {"--engines", "sensevoice", "--pad-ms", "0", "--normalize", "off"};
+    var discarding = new Factory(false);
+    assertEquals(0, run(discarding, Map.of(), args), stderr());
+    assertEquals(List.of(32), discarding.engines.get(0).seen);
+    assertTrue(stdout().contains("| sensevoice/pad0/normoff | 2 | 1 | 6 | - | - |\n"), stdout());
+    for (String file : List.of("summary.md", "utterances.tsv", "disagreements.tsv")) Files.delete(out.resolve(file));
+    stdout.reset();
+    var keeping = new Factory(false);
+    assertEquals(0, run(keeping, Map.of("ASR_MIN_PEAK", "0"), args), stderr());
+    assertEquals(List.of(32, 32), keeping.engines.get(0).seen);
+    assertTrue(stdout().contains("| sensevoice/pad0/normoff | 2 | 0 | 11 | - | - |\n"), stdout());
+  }
+
   @Test void aggregatesTwoPaddingConditionsExactly() throws Exception {
     threeUtterances();
     var factory = new Factory(false);
