@@ -64,6 +64,11 @@ class MainTest {
         "Unknown engine: nope in ASR_BLANK_PENALTY_BY_ENGINE (known: " + SherpaEngine.DIRS.keySet() + ")");
   }
 
+  @Test void validateRejectsAnUnknownEngineInTheMinAvgLogProbList() throws Exception {
+    assertRejected(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "nope:-0.5"),
+        "Unknown engine: nope in ASR_MIN_AVG_LOG_PROB_BY_ENGINE (known: " + SherpaEngine.DIRS.keySet() + ")");
+  }
+
   @Test void validateRejectsABlankPenaltyTheWorkersCannotUse() throws Exception {
     var unsupported = "Blank penalty 1.0 is not supported by engine sensevoice (transducer engines only: [reazon-ja, reazon-ja-en])";
     assertRejected(Map.of("ASR_ENGINES", "sensevoice,reazon-ja", "ASR_BLANK_PENALTY_BY_ENGINE", "sensevoice:1.0"), unsupported);

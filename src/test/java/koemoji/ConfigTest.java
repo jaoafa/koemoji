@@ -170,6 +170,46 @@ class ConfigTest {
     assertEquals("ASR_BLANK_PENALTY_BY_ENGINE names an engine twice: reazon-ja", duplicate.getMessage());
   }
 
+  @Test void discardThresholdsDefaultToPeakOnlyAndApplyPerEngine() {
+    var defaults = of(Map.of());
+    assertEquals(0.05f, defaults.minPeak());
+    assertEquals(Float.NEGATIVE_INFINITY, defaults.minAvgLogProbFor("reazon-ja"));
+    var c = of(Map.of("ASR_MIN_PEAK", "0", "ASR_MIN_AVG_LOG_PROB_BY_ENGINE", " reazon-ja:-0.5 , "));
+    assertEquals(0f, c.minPeak());
+    assertEquals(-0.5f, c.minAvgLogProbFor("reazon-ja"));
+    assertEquals(Float.NEGATIVE_INFINITY, c.minAvgLogProbFor("sensevoice"));
+    assertEquals(0f, of(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "reazon-ja:0")).minAvgLogProbFor("reazon-ja"));
+    assertEquals(1f, of(Map.of("ASR_MIN_PEAK", "1")).minPeak());
+  }
+
+  @Test void minPeakRejectsValuesOutsideItsRangeNamingTheValue() {
+    var notNumber = assertThrows(NumberFormatException.class, () -> of(Map.of("ASR_MIN_PEAK", "x")));
+    assertEquals("ASR_MIN_PEAK must be a number: x", notNumber.getMessage());
+    for (String v : new String[] {"-0.1", "1.5", "NaN", "Infinity"}) {
+      var e = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_MIN_PEAK", v)));
+      assertEquals("ASR_MIN_PEAK must be a finite number in [0, 1]: " + Float.parseFloat(v), e.getMessage());
+    }
+  }
+
+  @Test void minAvgLogProbRejectsValuesOutsideItsRangeNamingTheEntry() {
+    var notNumber = assertThrows(NumberFormatException.class, () -> of(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "reazon-ja:x")));
+    assertEquals("ASR_MIN_AVG_LOG_PROB_BY_ENGINE value must be a number: reazon-ja:x", notNumber.getMessage());
+    for (String v : new String[] {"0.1", "NaN", "Infinity", "-Infinity"}) {
+      var e = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "reazon-ja:" + v)));
+      assertEquals("ASR_MIN_AVG_LOG_PROB_BY_ENGINE must be a finite number <= 0: reazon-ja:" + v, e.getMessage());
+    }
+  }
+
+  @Test void minAvgLogProbRejectsMalformedElementsNamingTheVariableAndValue() {
+    var noColon = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "reazon-ja")));
+    assertEquals("ASR_MIN_AVG_LOG_PROB_BY_ENGINE entries must be name:value: reazon-ja", noColon.getMessage());
+    var noName = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", ":-0.5")));
+    assertEquals("ASR_MIN_AVG_LOG_PROB_BY_ENGINE entries must be name:value: :-0.5", noName.getMessage());
+    var duplicate = assertThrows(IllegalArgumentException.class,
+        () -> of(Map.of("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "reazon-ja:-1,reazon-ja:-2")));
+    assertEquals("ASR_MIN_AVG_LOG_PROB_BY_ENGINE names an engine twice: reazon-ja", duplicate.getMessage());
+  }
+
   @Test void recognitionTunablesCanBeOverridden() {
     var c = of(Map.of("ASR_MAX_ACTIVE_PATHS", "8", "ASR_SENSEVOICE_ITN", "FALSE", "ASR_NORMALIZE_SILENCE_DBFS", "-45.5"));
     assertEquals(8, c.maxActivePaths());
