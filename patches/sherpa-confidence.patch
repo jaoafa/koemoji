@@ -1,0 +1,145 @@
+diff --git a/sherpa-onnx/java-api/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizerResult.java b/sherpa-onnx/java-api/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizerResult.java
+--- a/sherpa-onnx/java-api/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizerResult.java
++++ b/sherpa-onnx/java-api/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizerResult.java
+@@ -10,8 +10,9 @@
+     private final String emotion;
+     private final String event;
+     private final float[] durations;
++    private final float[] ysLogProbs;
+ 
+-    public OfflineRecognizerResult(String text, String[] tokens, float[] timestamps, String lang, String emotion, String event, float[] durations) {
++    public OfflineRecognizerResult(String text, String[] tokens, float[] timestamps, String lang, String emotion, String event, float[] durations, float[] ysLogProbs) {
+         this.text = text;
+         this.tokens = tokens;
+         this.timestamps = timestamps;
+@@ -19,6 +20,7 @@
+         this.emotion = emotion;
+         this.event = event;
+         this.durations = durations;
++        this.ysLogProbs = ysLogProbs;
+     }
+ 
+     public String getText() {
+@@ -48,4 +50,8 @@
+     public float[] getDurations() {
+         return durations;
+     }
++
++    public float[] getYsLogProbs() {
++        return ysLogProbs;
++    }
+ }
+diff --git a/sherpa-onnx/jni/offline-recognizer.cc b/sherpa-onnx/jni/offline-recognizer.cc
+--- a/sherpa-onnx/jni/offline-recognizer.cc
++++ b/sherpa-onnx/jni/offline-recognizer.cc
+@@ -661,7 +661,7 @@
+   jmethodID ctor =
+       env->GetMethodID(cls, "<init>",
+                        "(Ljava/lang/String;[Ljava/lang/String;[FLjava/lang/"
+-                       "String;Ljava/lang/String;Ljava/lang/String;[F)V");
++                       "String;Ljava/lang/String;Ljava/lang/String;[F[F)V");
+   jstring jtext = SafeNewStringUTF(env, result.text);
+ 
+   jclass string_cls = env->FindClass("java/lang/String");
+@@ -686,9 +686,13 @@
+   jfloatArray jdurations = env->NewFloatArray(result.durations.size());
+   env->SetFloatArrayRegion(jdurations, 0, result.durations.size(),
+                            result.durations.data());
++  jfloatArray jysLogProbs = env->NewFloatArray(result.ys_log_probs.size());
++  env->SetFloatArrayRegion(jysLogProbs, 0, result.ys_log_probs.size(),
++                           result.ys_log_probs.data());
+ 
+   jobject jresult = env->NewObject(cls, ctor, jtext, jtokens, jtimestamps,
+-                                   jlang, jemotion, jevent, jdurations);
++                                   jlang, jemotion, jevent, jdurations,
++                                   jysLogProbs);
+ 
+   env->DeleteLocalRef(jtext);
+   env->DeleteLocalRef(jtokens);
+@@ -697,6 +701,7 @@
+   env->DeleteLocalRef(jemotion);
+   env->DeleteLocalRef(jevent);
+   env->DeleteLocalRef(jdurations);
++  env->DeleteLocalRef(jysLogProbs);
+   env->DeleteLocalRef(cls);
+ 
+   return jresult;  // returned object is safe
+diff --git a/sherpa-onnx/csrc/offline-ctc-decoder.h b/sherpa-onnx/csrc/offline-ctc-decoder.h
+--- a/sherpa-onnx/csrc/offline-ctc-decoder.h
++++ b/sherpa-onnx/csrc/offline-ctc-decoder.h
+@@ -26,6 +26,9 @@
+   ///
+   /// tokens.size() == timestamps.size()
+   std::vector<int32_t> timestamps;
++
++  /// ys_log_probs[i] is the log probability of tokens[i].
++  std::vector<float> ys_log_probs;
+ };
+ 
+ class OfflineCtcDecoder {
+diff --git a/sherpa-onnx/csrc/offline-ctc-greedy-search-decoder.cc b/sherpa-onnx/csrc/offline-ctc-greedy-search-decoder.cc
+--- a/sherpa-onnx/csrc/offline-ctc-greedy-search-decoder.cc
++++ b/sherpa-onnx/csrc/offline-ctc-greedy-search-decoder.cc
+@@ -5,6 +5,7 @@
+ #include "sherpa-onnx/csrc/offline-ctc-greedy-search-decoder.h"
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <utility>
+ #include <vector>
+ 
+@@ -32,17 +33,23 @@
+     int64_t prev_id = -1;
+ 
+     for (int32_t t = 0; t != static_cast<int32_t>(p_log_probs_length[b]); ++t) {
+-      auto y = static_cast<int64_t>(std::distance(
++      const float *best = std::max_element(
+           static_cast<const float *>(p_log_probs),
+-          std::max_element(
+-              static_cast<const float *>(p_log_probs),
+-              static_cast<const float *>(p_log_probs) + vocab_size)));
+-      p_log_probs += vocab_size;
++          static_cast<const float *>(p_log_probs) + vocab_size);
++      auto y = static_cast<int64_t>(std::distance(
++          static_cast<const float *>(p_log_probs), best));
+ 
+       if (y != blank_id_ && y != prev_id) {
+         r.tokens.push_back(y);
+         r.timestamps.push_back(t);
++        // Some models (e.g. SenseVoice) output raw logits, so normalize into log-softmax.
++        double sum = 0;
++        for (int32_t k = 0; k != vocab_size; ++k) {
++          sum += std::exp(static_cast<double>(p_log_probs[k]) - *best);
++        }
++        r.ys_log_probs.push_back(static_cast<float>(-std::log(sum)));
+       }
++      p_log_probs += vocab_size;
+       prev_id = y;
+     }  // for (int32_t t = 0; ...)
+ 
+diff --git a/sherpa-onnx/csrc/offline-recognizer-ctc-impl.h b/sherpa-onnx/csrc/offline-recognizer-ctc-impl.h
+--- a/sherpa-onnx/csrc/offline-recognizer-ctc-impl.h
++++ b/sherpa-onnx/csrc/offline-recognizer-ctc-impl.h
+@@ -45,6 +45,9 @@
+     }
+     auto sym = sym_table[src.tokens[i]];
+     text.append(sym);
++    if (src.ys_log_probs.size() == src.tokens.size()) {
++      r.ys_log_probs.push_back(src.ys_log_probs[i]);
++    }
+ 
+     if (sym.size() == 1 && (sym[0] < 0x20 || sym[0] > 0x7e)) {
+       // for bpe models with byte_fallback
+diff --git a/sherpa-onnx/csrc/offline-recognizer-sense-voice-impl.h b/sherpa-onnx/csrc/offline-recognizer-sense-voice-impl.h
+--- a/sherpa-onnx/csrc/offline-recognizer-sense-voice-impl.h
++++ b/sherpa-onnx/csrc/offline-recognizer-sense-voice-impl.h
+@@ -40,6 +40,9 @@
+   for (int32_t i = start; i < src.tokens.size(); ++i) {
+     auto sym = sym_table[src.tokens[i]];
+     text.append(sym);
++    if (src.ys_log_probs.size() == src.tokens.size()) {
++      r.ys_log_probs.push_back(src.ys_log_probs[i]);
++    }
+ 
+     r.tokens.push_back(std::move(sym));
+   }

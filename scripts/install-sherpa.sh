@@ -3,19 +3,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 V=$(grep -oP '<sherpa.version>\K[^<]+' pom.xml)
-SOURCE_COMMIT=11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-if [[ "$V" != "1.13.8" ]]; then
-  echo "Sherpa-ONNX confidence patch is pinned to 1.13.8; update the source commit and patch before changing sherpa.version" >&2
-  exit 1
-fi
 
-curl -fsSL -o "$tmp/source.tar.gz" "https://github.com/k2-fsa/sherpa-onnx/archive/$SOURCE_COMMIT.tar.gz"
+curl -fsSL -o "$tmp/source.tar.gz" "https://github.com/k2-fsa/sherpa-onnx/archive/refs/tags/v$V.tar.gz"
 mkdir "$tmp/source"
 tar -xzf "$tmp/source.tar.gz" --strip-components=1 -C "$tmp/source"
-git -C "$tmp/source" apply --unidiff-zero --check "$PWD/scripts/sherpa-confidence.patch"
-git -C "$tmp/source" apply --unidiff-zero "$PWD/scripts/sherpa-confidence.patch"
+git -C "$tmp/source" apply --check "$PWD/patches/sherpa-confidence.patch"
+git -C "$tmp/source" apply "$PWD/patches/sherpa-confidence.patch"
 
 cmake -S "$tmp/source" -B "$tmp/build" \
   -DCMAKE_BUILD_TYPE=Release \
