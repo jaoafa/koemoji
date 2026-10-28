@@ -31,5 +31,8 @@ jobs:
           cache: maven
       - run: python3 -m unittest discover -s updater/tests
       - run: scripts/install-sherpa.sh
-      # PipelineTest and UserPipelineTest are skipped here because they need the models and a speech wav under data/models
+      # PipelineTest and UserPipelineTest are skipped here because they need the models and a speech wav under data/models.
+      # CtcConfidenceTest downloads its models and must pass, so a sherpa-onnx update that breaks the confidence patch fails here.
       - run: mvn -B verify
+        env:
+          REQUIRE_MODEL_TESTS: "1"

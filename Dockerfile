@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY pom.xml .
 COPY scripts/install-sherpa.sh scripts/install-sherpa.sh
-COPY scripts/sherpa-confidence.patch scripts/sherpa-confidence.patch
+COPY patches/sherpa-confidence.patch patches/sherpa-confidence.patch
 RUN scripts/install-sherpa.sh
 COPY src src
 RUN mvn -q -B package -DskipTests
