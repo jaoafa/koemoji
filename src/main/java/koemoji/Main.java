@@ -62,9 +62,13 @@ public final class Main {
     if (!Float.isFinite(maxGain) || maxGain < 0) throw new IllegalStateException("ASR_NORMALIZE_MAX_GAIN_DB must be a finite number >= 0: " + maxGain);
     if (!Float.isFinite(peak) || peak <= 0 || peak > 1) throw new IllegalStateException("ASR_NORMALIZE_PEAK must be in (0, 1]: " + peak);
     requireKnownEngines("ASR_DECODING_METHOD_BY_ENGINE", c.decodingMethodByEngine().keySet());
+    requireKnownEngines("ASR_BLANK_PENALTY_BY_ENGINE", c.blankPenaltyByEngine().keySet());
     // SherpaEngine を作るのは worker だけなので、capture だけのノードや ASR_ENGINES にだけ挙げたエンジンは対象にしない
     for (String e : c.worker() ? c.workerEngines().stream().distinct().toList() : java.util.List.<String>of()) {
-      try { SherpaEngine.requireDecoding(e, c.decodingMethodFor(e)); }
+      try {
+        SherpaEngine.requireDecoding(e, c.decodingMethodFor(e));
+        SherpaEngine.requireBlankPenalty(e, c.blankPenaltyFor(e));
+      }
       catch (IllegalArgumentException ex) { throw new IllegalStateException(ex.getMessage(), ex); }
     }
   }

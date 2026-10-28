@@ -143,6 +143,33 @@ class ConfigTest {
     assertEquals("ASR_DECODING_METHOD_BY_ENGINE names an engine twice: reazon-ja", duplicate.getMessage());
   }
 
+  @Test void blankPenaltyDefaultsToZeroAndAppliesPerEngine() {
+    assertEquals(0f, of(Map.of()).blankPenaltyFor("reazon-ja"));
+    var c = of(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", " reazon-ja:1.0 , reazon-ja-en:0.6 , "));
+    assertEquals(1.0f, c.blankPenaltyFor("reazon-ja"));
+    assertEquals(0.6f, c.blankPenaltyFor("reazon-ja-en"));
+    assertEquals(0f, c.blankPenaltyFor("sensevoice"));
+  }
+
+  @Test void blankPenaltyRejectsValuesOutsideItsRangeNamingTheEntry() {
+    var notNumber = assertThrows(NumberFormatException.class, () -> of(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", "reazon-ja:x")));
+    assertEquals("ASR_BLANK_PENALTY_BY_ENGINE value must be a number: reazon-ja:x", notNumber.getMessage());
+    for (String v : new String[] {"-0.1", "NaN", "Infinity"}) {
+      var e = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", "reazon-ja:" + v)));
+      assertEquals("ASR_BLANK_PENALTY_BY_ENGINE must be a finite number >= 0: reazon-ja:" + v, e.getMessage());
+    }
+    assertEquals(0f, of(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", "reazon-ja:0")).blankPenaltyFor("reazon-ja"));
+  }
+
+  @Test void blankPenaltyRejectsMalformedElementsNamingTheVariableAndValue() {
+    var noColon = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", "reazon-ja")));
+    assertEquals("ASR_BLANK_PENALTY_BY_ENGINE entries must be name:value: reazon-ja", noColon.getMessage());
+    var noName = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", ":1.0")));
+    assertEquals("ASR_BLANK_PENALTY_BY_ENGINE entries must be name:value: :1.0", noName.getMessage());
+    var duplicate = assertThrows(IllegalArgumentException.class, () -> of(Map.of("ASR_BLANK_PENALTY_BY_ENGINE", "reazon-ja:1,reazon-ja:2")));
+    assertEquals("ASR_BLANK_PENALTY_BY_ENGINE names an engine twice: reazon-ja", duplicate.getMessage());
+  }
+
   @Test void recognitionTunablesCanBeOverridden() {
     var c = of(Map.of("ASR_MAX_ACTIVE_PATHS", "8", "ASR_SENSEVOICE_ITN", "FALSE", "ASR_NORMALIZE_SILENCE_DBFS", "-45.5"));
     assertEquals(8, c.maxActivePaths());

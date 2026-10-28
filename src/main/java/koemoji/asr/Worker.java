@@ -57,8 +57,8 @@ public final class Worker {
     boolean up = false;
     long backoff = 1000;
     try (engine) {
-      log.info("worker {} ready ({}, pad={} ms, normalize={}, decoding={})", id, engine.capabilities(), c.padMsFor(engineName),
-          c.normalizes(engineName), c.decodingMethodFor(engineName));
+      log.info("worker {} ready ({}, pad={} ms, normalize={}, decoding={}, blankPenalty={})", id, engine.capabilities(),
+          c.padMsFor(engineName), c.normalizes(engineName), c.decodingMethodFor(engineName), c.blankPenaltyFor(engineName));
       alive.incrementAndGet();
       up = true;
       while (!Thread.currentThread().isInterrupted()) {
