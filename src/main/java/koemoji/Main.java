@@ -39,7 +39,7 @@ public final class Main {
     return args.length == 0 || args[0].equals("replay") ? null : "Unknown subcommand: " + args[0] + " (known: replay)";
   }
 
-  /** Fails fast on config that would silently do nothing or strand jobs: bad MODE, empty or unknown engines, engines no local worker serves. */
+  /** 黙って何もしない、またはジョブが取り残される設定を、起動時に弾く。不正な MODE、空または未知のエンジン、ローカルの worker が担当しないエンジンが対象。 */
   static void validate(Config c) {
     if (!java.util.Set.of("all", "capture", "worker").contains(c.mode()))
       throw new IllegalStateException("MODE must be all, capture or worker: " + c.mode());

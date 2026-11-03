@@ -14,12 +14,11 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
- * Per-user audio pipeline: 48 kHz stereo big-endian PCM -> 16 kHz mono -> Silero VAD -> utterance file
- * (append-only s16le) -> partial/final jobs in the queue. All methods are synchronized: audio arrives on a JDA
- * thread, tick() on the scheduler thread.
+ * ユーザーごとの音声パイプライン。48 kHz ステレオ big-endian PCM を 16 kHz モノラルにし、Silero VAD で発話を検出して発話ファイル(追記のみの s16le)へ書き、partial/final のジョブをキューへ登録する。
+ * 音声は JDA のスレッド、tick() はスケジューラのスレッドから呼ばれるため、メソッドはすべて synchronized にしている。
  */
 public final class UserPipeline implements Closeable {
-  public static final int WIN = 512;           // Silero window at 16 kHz = 32 ms
+  public static final int WIN = 512;           // 16 kHz での Silero のウィンドウ長 (32 ms)
   private static final int WIN_MS = 32;
   private static final int GAP_MS = 200;
 
@@ -32,7 +31,7 @@ public final class UserPipeline implements Closeable {
   private final ArrayDeque<short[]> preroll = new ArrayDeque<>();
   private final short[] cur = new short[WIN];
 
-  private static final int DECIMATE = 3;       // 48 kHz -> 16 kHz
+  private static final int DECIMATE = 3;       // 48 kHz から 16 kHz へ。3 サンプルの平均を 1 サンプルにする
   private int resampleSum, resampleCount;
 
   private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(UserPipeline.class);
@@ -78,11 +77,11 @@ public final class UserPipeline implements Closeable {
     };
   }
 
-  /** @param pcm big-endian 16-bit stereo 48 kHz (JDA output format) */
+  /** @param pcm 48 kHz ステレオ 16 bit の big-endian(JDA の出力形式) */
   public synchronized void accept(byte[] pcm) {
-    if (closed) return;  // the VAD is native and released by close(); a late packet must not touch it
+    if (closed) return;  // VAD はネイティブで close() が解放するため、遅れて届いたパケットで触らない
     long now = System.currentTimeMillis();
-    if (now - lastAudioMs > GAP_MS) { winFill = 0; resampleSum = 0; resampleCount = 0; }  // Discord sends nothing while silent
+    if (now - lastAudioMs > GAP_MS) { winFill = 0; resampleSum = 0; resampleCount = 0; }  // 無音の間、Discord は何も送ってこない
     lastAudioMs = now;
     ByteBuffer b = ByteBuffer.wrap(pcm).order(ByteOrder.BIG_ENDIAN);
     while (b.remaining() >= 4) {
@@ -113,13 +112,13 @@ public final class UserPipeline implements Closeable {
       return;
     }
     write(cur);
-    if (utt == null) return;  // the write failed and the utterance was dropped
+    if (utt == null) return;  // 書き込みに失敗して発話を閉じ済み
     silenceRun = speech ? 0 : silenceRun + 1;
     if (silenceRun * WIN_MS >= c.vadEndSilenceMs()) finish();
-    else if (bytes >= c.maxUtteranceMs() * 32L) { finish(); begin(); }  // keep going as a new utterance
+    else if (bytes >= c.maxUtteranceMs() * 32L) { finish(); begin(); }  // 続きは新しい発話として扱う
   }
 
-  /** @return false if the utterance file could not be created (nothing is left open) */
+  /** @return 発話ファイルを作れなかったら false(開いたままのものは残らない) */
   private boolean begin() {
     String id = UUID.randomUUID().toString();
     Path p = c.audioDir().resolve(id + ".pcm");
@@ -142,9 +141,9 @@ public final class UserPipeline implements Closeable {
   }
 
   /**
-   * Disk trouble: stop writing and wait for the next utterance instead of failing on every packet. If partials were
-   * already queued, close the utterance with a final over the flushed prefix so its rows and file are reclaimed
-   * through the normal path; otherwise nothing refers to the file and it is deleted.
+   * ディスク障害時は、パケットのたびに失敗しないよう、書き込みをやめて次の発話を待つ。
+   * partial をすでにキューへ登録していれば、書き出し済みの先頭部分に対する final で発話を閉じ、通常の経路で行とファイルを回収する。
+   * 登録していなければ、ファイルを参照するものがないので削除する。
    */
   private void abort(IOException e) {
     log.warn("utterance file failed; closing utterance {}", utt, e);
@@ -176,14 +175,14 @@ public final class UserPipeline implements Closeable {
     return finalizationSucceeded;
   }
 
-  /** One job per configured engine (shadow comparison); revision is shared across engines. */
+  /** 設定されたエンジンごとに 1 つずつジョブを登録する(エンジン間の比較用)。リビジョンはエンジン間で共通。 */
   private void enqueueAll(boolean fin) {
-    if (rev == 0) onUtterance.accept(utt, utteranceStartedAtMs);  // register only once a job exists
+    if (rev == 0) onUtterance.accept(utt, utteranceStartedAtMs);  // 最初のジョブを登録する直前に 1 回だけ、発話を通知する
     rev++;
     for (String e : c.engines()) db.enqueue(utt, rev, fin, path.toString(), bytes, e);
   }
 
-  /** Called periodically: emits partial jobs, and ends an utterance when the user's packets stop arriving. */
+  /** 定期的に呼ばれる。partial のジョブを登録し、ユーザーのパケットが途絶えたら発話を終える。 */
   public synchronized void tick() {
     if (utt == null) return;
     long now = System.currentTimeMillis();
@@ -195,7 +194,7 @@ public final class UserPipeline implements Closeable {
     }
   }
 
-  /** True when no utterance is open and no audio arrived for idleMs, so the pipeline can be released. */
+  /** 発話が開いておらず、idleMs 以上音声が届いていなければ true。パイプラインを解放してよい。 */
   public synchronized boolean idle(long idleMs) {
     return utt == null && System.currentTimeMillis() - lastAudioMs > idleMs;
   }

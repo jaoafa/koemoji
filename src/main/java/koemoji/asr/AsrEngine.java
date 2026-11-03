@@ -2,7 +2,7 @@ package koemoji.asr;
 
 import koemoji.Config;
 
-/** Swappable ASR backend. Samples are 16 kHz mono float in [-1, 1]. */
+/** 差し替え可能な ASR バックエンド。サンプルは 16 kHz モノラルで、[-1, 1] の float。 */
 public interface AsrEngine extends AutoCloseable {
   record Result(String text, double logProbabilitySum, int scoredTokenCount) {}
 

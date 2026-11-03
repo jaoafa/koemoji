@@ -9,11 +9,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Any offline sherpa-onnx model, selected by engine name. Offline models have no native streaming, so partials are
- * snapshot recognitions of the audio so far.
+ * エンジン名で選ぶ、sherpa-onnx の任意のオフラインモデル。
+ * オフラインモデルにはストリーミング認識がないので、partial はそこまでの音声のスナップショットを認識した結果になる。
  */
 public final class SherpaEngine implements AsrEngine {
-  /** engine name -> model directory under MODELS_DIR */
+  /** エンジン名から、MODELS_DIR 以下のモデルディレクトリへの対応。 */
   public static final Map<String, String> DIRS = Map.of(
       "sensevoice", "sensevoice",
       "reazon-ja-en", "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17",

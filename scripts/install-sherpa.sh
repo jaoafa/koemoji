@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sherpa-onnx is not on Maven Central. Build its Java and JNI APIs with token scores enabled.
+# sherpa-onnx は Maven Central にないので、token score を有効にした Java と JNI の API をビルドする。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 V=$(grep -oP '<sherpa.version>\K[^<]+' pom.xml)

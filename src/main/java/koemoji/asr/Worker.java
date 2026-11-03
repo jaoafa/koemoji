@@ -15,13 +15,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Bounded pool of ASR workers polling the SQLite queue, plus TTL/crash-recovery reaper. */
+/** SQLite のキューをポーリングする ASR worker の固定数のプールと、TTL 切れの削除・クラッシュ回復を行う reaper。 */
 public final class Worker {
   private static final Logger log = LoggerFactory.getLogger(Worker.class);
   private static final long STALE_MS = 5 * 60_000;
 
   private static final AtomicInteger alive = new AtomicInteger();
-  /** Per "engine|final|partial": [jobs, nanoseconds spent recognizing]. */
+  /** "engine|final|partial" ごとの [ジョブ数, 認識に要したナノ秒]。 */
   private static final Map<String, long[]> stats = new ConcurrentHashMap<>();
 
   private final AtomicBoolean acceptingClaims = new AtomicBoolean(true);
@@ -35,8 +35,7 @@ public final class Worker {
   public static Worker start(Config c, Db db) {
     Worker worker = new Worker();
     String host = System.getenv().getOrDefault("HOSTNAME", "local") + "-" + ProcessHandle.current().pid();
-    // Engines are built here, before any thread starts, so a missing/invalid model fails the process at startup
-    // (and the restart policy applies) instead of silently killing one worker thread.
+    // エンジンはスレッドを起動する前にここで作る。モデルがない・不正な場合に worker のスレッドが黙って落ちず、起動時にプロセスが失敗して再起動ポリシーが働くようにするため。
     for (int i = 0; i < c.workerEngines().size(); i++) {
       String id = host + "-" + i, name = c.workerEngines().get(i);
       AsrEngine engine = AsrEngine.create(name, c);
@@ -44,7 +43,7 @@ public final class Worker {
     }
     var reaper = Executors.newSingleThreadScheduledExecutor(r -> Thread.ofPlatform().daemon().name("reaper").unstarted(r));
     reaper.scheduleWithFixedDelay(() -> {
-      try { reap(c, db); } catch (Throwable t) { log.warn("reaper failed", t); }  // an Error would silently cancel the schedule
+      try { reap(c, db); } catch (Throwable t) { log.warn("reaper failed", t); }  // Error を放置すると、スケジュールが黙って止まる
     }, 10, 30, TimeUnit.SECONDS);
     return worker;
   }
@@ -73,8 +72,8 @@ public final class Worker {
         } catch (InterruptedException e) {
           throw e;
         } catch (Exception e) {
-          // transient DB trouble must not kill the thread; a job left in 'processing' is requeued by the reaper.
-          // Backing off keeps a persistent failure from flooding the log.
+          // 一時的な DB の不調でスレッドを落とさない。'processing' のまま残ったジョブは reaper がキューへ戻す。
+          // バックオフにより、障害が続いてもログが溢れないようにする。
           log.warn("worker {} iteration failed; retrying in {} ms", id, backoff, e);
           Thread.sleep(backoff);
           backoff = Math.min(backoff * 2, 30_000);
@@ -82,7 +81,7 @@ public final class Worker {
       }
     } catch (InterruptedException ignored) {
     } catch (Throwable t) {
-      // an Error (e.g. OOM) must not leave a bot that looks online but transcribes nothing: exit so Docker restarts it
+      // OOM などの Error で、オンラインに見えるのに何も文字起こししない bot を残さない。終了して Docker に再起動させる
       log.error("worker {} died; exiting", id, t);
       System.exit(1);
     } finally {
@@ -147,7 +146,7 @@ public final class Worker {
     return out;
   }
 
-  /** Zero-pads both ends; some models drop the first/last sound when audio starts or stops abruptly. */
+  /** 前後に無音を足す。音声が突然始まる・終わると、先頭や末尾の音を落とすモデルがあるため。 */
   public static float[] pad(float[] x, int ms) {
     int n = ms * 16;
     if (n <= 0) return x;
@@ -156,7 +155,7 @@ public final class Worker {
     return out;
   }
 
-  /** Reads only the first snapshotBytes so a still-growing recording file is an immutable snapshot. */
+  /** 先頭の bytes バイトだけを読み、伸び続ける録音ファイルを不変のスナップショットとして扱う。 */
   public static float[] read(String path, long bytes) throws IOException {
     byte[] b = new byte[(int) bytes];
     try (var f = new RandomAccessFile(path, "r")) { f.readFully(b); }
@@ -173,9 +172,9 @@ public final class Worker {
       try {
         Files.deleteIfExists(Path.of(e[1]));
         db.deleteUtterance(e[0]);
-      } catch (IOException ex) { log.warn("could not delete {}", e[1], ex); }  // one bad file must not stop the rest
+      } catch (IOException ex) { log.warn("could not delete {}", e[1], ex); }  // 1 ファイルの失敗で残りの削除を止めない
     }
-    // orphans: files never referenced by any job (e.g. capture crashed before the first job was enqueued)
+    // 孤児ファイル。どのジョブからも参照されないもの(例: 最初のジョブの登録前に capture が落ちた場合)
     long cutoff = System.currentTimeMillis() - 3_600_000;
     try (var ls = Files.list(c.audioDir())) {
       for (Path p : (Iterable<Path>) ls::iterator) {

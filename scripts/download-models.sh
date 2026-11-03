@@ -1,10 +1,10 @@
 #!/bin/sh
-# Fetch Silero VAD + the main ASR models into ./data/models (idempotent).
+# Silero VAD と主な ASR モデルを ./data/models へ取得する (何度実行しても結果は同じ)。
 set -e
 B=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models
 mkdir -p data/models && cd data/models
 [ -f silero_vad.onnx ] || curl -fsSL -o silero_vad.onnx $B/silero_vad.onnx
-# extract into a scratch dir and rename last, so an interrupted download is never mistaken for a complete model
+# 作業用ディレクトリへ展開して最後に名前を変えるので、ダウンロードが中断しても完成したモデルと誤認しない
 fetch() {
   [ -d "$2" ] && return 0
   rm -rf "$2.part" && mkdir "$2.part"

@@ -13,7 +13,7 @@ services:
       MODE: ${MODE:-all}
       UPDATE_CONTROL_SECRET: ${UPDATE_CONTROL_SECRET:-}
       HEALTH_PORT: 8080
-      # engine defaults to sensevoice; set ASR_ENGINES=a,b to compare several (see README)
+      # engine は既定で sensevoice。ASR_ENGINES=a,b で複数のエンジンを比較できる (README 参照)
       ASR_THREADS: 2
       ASR_LANGUAGE: ja
       ASR_PAD_MS: 300

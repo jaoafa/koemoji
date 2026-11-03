@@ -11,7 +11,7 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.ToIntBiFunction;
 
-/** All tunables come from environment variables; the defaults live here. */
+/** 調整項目はすべて環境変数から読み、既定値はここで定める。 */
 public record Config(
     String mode, String token, Path audioDir, Path queueDb,
     List<String> engines, Path modelsDir, Path vadModel, List<String> workerEngines, int asrThreads,
@@ -162,7 +162,7 @@ public record Config(
 
   private static List<String> list(String v) { return List.of(v.trim().split("\\s*,\\s*")); }
 
-  /** "a:2,b" -> [a, a, b]: one entry per worker thread. */
+  /** "a:2,b" を [a, a, b] にする。ワーカースレッド 1 つにつき 1 要素。 */
   private static List<String> workers(String v) {
     var out = new ArrayList<String>();
     for (String e : list(v)) {

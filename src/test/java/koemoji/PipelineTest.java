@@ -10,7 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.*;
 import org.junit.jupiter.api.Test;
 
-/** End-to-end without Discord: wav -> UserPipeline (VAD, partial/final jobs) -> Worker (SenseVoice) -> results. */
+/** Discord を使わない結合テスト。wav から UserPipeline(VAD、partial/final のジョブ化)、Worker(SenseVoice)を通して結果を確かめる。 */
 class PipelineTest {
   @Test void wavBecomesPartialsAndFinal() throws Exception {
     org.junit.jupiter.api.Assumptions.assumeTrue(Files.isDirectory(Path.of("data/models/sensevoice")) && Files.exists(Path.of("data/models/test_silero_vad.wav")), "models not downloaded");
@@ -26,7 +26,7 @@ class PipelineTest {
 
     byte[] wav = Files.readAllBytes(Path.of("data/models/test_silero_vad.wav"));
     var s = ByteBuffer.wrap(wav, 44, wav.length - 44).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer();
-    var chunk = ByteBuffer.allocate(320 * 3 * 4);  // 20 ms of 48 kHz stereo big-endian, as JDA delivers
+    var chunk = ByteBuffer.allocate(320 * 3 * 4);  // JDA が渡す形式の、48 kHz ステレオ big-endian で 20 ms 分
     while (s.remaining() >= 320) {
       chunk.clear();
       for (int i = 0; i < 320; i++) { short v = s.get(); for (int k = 0; k < 6; k++) chunk.putShort(v); }
@@ -37,7 +37,7 @@ class PipelineTest {
     p.close();
     assertFalse(utts.isEmpty(), "VAD found no utterance");
 
-    var texts = new java.util.HashMap<String, String>();  // finals only
+    var texts = new java.util.HashMap<String, String>();  // final のみ
     long deadline = System.currentTimeMillis() + 120_000;
     int finals = 0;
     while (finals < utts.size() && System.currentTimeMillis() < deadline) {

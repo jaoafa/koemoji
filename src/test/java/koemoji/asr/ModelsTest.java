@@ -67,7 +67,7 @@ class ModelsTest {
 
   @Test void extractAcceptsADestinationThatIsNotNormalized() throws Exception {
     Path base = Files.createTempDirectory("cwm");
-    Path dest = base.resolve("x/../model");  // like MODELS_DIR=./models
+    Path dest = base.resolve("x/../model");  // MODELS_DIR=./models のような相対表記
     Models.extract(new ByteArrayInputStream(archive("top/", null, "top/tokens.txt", "abc")), dest);
     assertEquals("abc", Files.readString(base.resolve("model/tokens.txt")));
   }

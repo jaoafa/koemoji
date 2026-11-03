@@ -22,7 +22,7 @@ printf 'DISCORD_TOKEN=%s\nUPDATE_CONTROL_SECRET=%s\n' '取得した Bot token' "
 docker compose up -d --build
 ```
 
-モデルは初回起動時に `./data/models` へ自動ダウンロードされ、キャッシュされます。事前に全部取得したい場合は `scripts/download-models.sh` を使います。
+モデルは初回起動時に `./data/models` へ自動ダウンロードされ、キャッシュされます。事前に取得したい場合は `scripts/download-models.sh` を使います。取得するのは Silero VAD と、`sensevoice`、`reazon-ja-en`、`reazon-ja`、`qwen3-asr`、`whisper-small` のモデルだけです。ほかのエンジンのモデルは、そのエンジンを設定して起動したときにダウンロードされます。
 
 Discord 上で、文字起こしを投稿したいテキストチャンネルで `/register` を一度実行します(`channel` で投稿先を指定することもできます)。`engine` を選ぶと、その ASR エンジンだけ別のチャンネルへ投稿できます。engine を省略した `/register` は従来どおり default の投稿先を設定し、個別設定のない engine は default を使います。
 
@@ -62,6 +62,8 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 | `INCLUDE_BOTS` | `true` | 他の bot の音声も文字起こしする |
 | `HEALTH_PORT` | `8080` | `/health` と `/metrics` の HTTP ポート(`0` で無効。無効のときは Docker の `HEALTHCHECK` も常に成功します) |
 | `MODELS_DIR`、`VAD_MODEL`、`AUDIO_DIR`、`QUEUE_DB` | `Config.java` 参照 | 各種パス。Docker イメージでは `/data` 以下に設定済みです |
+
+同梱の `compose.yaml` は、`ASR_THREADS` を `2`、`ASR_LANGUAGE` を `ja`、`ASR_PAD_MS` を `300` に設定しています。この表の既定値は、環境変数を指定しなかったときのアプリの値です。
 
 エンジン: `sensevoice`、`reazon-ja`、`reazon-ja-en`、`qwen3-asr`、`whisper-small`、`whisper-turbo`、`parakeet-ja`、`dolphin-small`(`SherpaEngine.DIRS` 参照)。
 
@@ -187,6 +189,7 @@ sudo apt-get install build-essential cmake git
 scripts/install-sherpa.sh   # 初回と、既存環境をこの変更へ更新した後に実行: token score 対応の Java/JNI binding を ~/.m2 に入れます
 mvn test      # PipelineTest は data/models に sensevoice と test_silero_vad.wav、UserPipelineTest は silero_vad.onnx と test_silero_vad.wav があるときだけ実行されます(wav は音声を含む 16 kHz モノラル 16-bit の WAV を自分で置きます)
 mvn package   # target/koemoji.jar
+python3 -m unittest discover -s updater/tests   # updater のテスト
 ```
 
 設計上の要点:

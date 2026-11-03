@@ -10,7 +10,7 @@ import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.util.function.BooleanSupplier;
 
-/** Health check and Prometheus-style metrics over plain HTTP (JDK built-in server). */
+/** ヘルスチェックと Prometheus 形式のメトリクスを、JDK 組み込みの HTTP サーバーで提供する。 */
 final class Ops {
   private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(Ops.class);
   private final HttpServer server;
@@ -27,7 +27,7 @@ final class Ops {
     server.createContext("/metrics", ex -> {
       String body;
       try { body = metrics(db); }
-      catch (RuntimeException e) {  // the JDK server would only log this at TRACE and drop the connection
+      catch (RuntimeException e) {  // JDK のサーバーは、これを TRACE でログに出して接続を切るだけになる
         log.warn("metrics failed", e);
         reply(ex, 503, "metrics unavailable\n");
         return;

@@ -15,8 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Turns finished ASR jobs into Discord messages, grouping nearby utterances from the same user, engine, and channel.
- * Stale revisions are ignored and edits coalesce to the newest result.
+ * 完了した ASR ジョブを Discord のメッセージにする。同じユーザー・エンジン・投稿先チャンネルで近接する発話は 1 つにまとめる。
+ * 古いリビジョンは無視し、編集は最新の結果にまとめる。
  */
 final class Transcripts {
   private static final Logger log = LoggerFactory.getLogger(Transcripts.class);
@@ -80,13 +80,13 @@ final class Transcripts {
 
   long inflightCount() { return displayGroups.values().stream().filter(group -> group.inflight).count(); }
 
-  /** Captures destination routes before the utterance's first job is enqueued. */
+  /** 発話の最初のジョブを登録する前に、投稿先の設定を控える。 */
   void register(String utteranceId, long guildId, long userId, long startedAtMs, String userName) {
     var engines = new HashSet<>(c.engines());
     utts.put(utteranceId, new Utt(guildId, userId, startedAtMs, db.routesOf(guildId, engines), userName, engines.size()));
   }
 
-  /** Applies the newest completed revision per (utterance, engine). */
+  /** (発話, エンジン) ごとに、完了した最新のリビジョンを反映する。 */
   void apply() {
     var done = db.pollDone();
     long now = clock.getAsLong();
@@ -113,7 +113,7 @@ final class Transcripts {
       Utt u = utts.get(id);
       if (u == null) { list.forEach(d -> consumed.add(d.id())); return; }
       Msg m = u.msgs.computeIfAbsent(engine, k -> new Msg());
-      if (m.group != null && m.group.inflight) return;  // rows stay unconsumed; next tick only the newest matters
+      if (m.group != null && m.group.inflight) return;  // 行は未消化のまま残す。次の tick では最新の行だけを処理すればよい
       Long channelId = u.routes.get(engine);
       if (m.group == null && channelId != null) {
         Group candidate = displayGroups.get(new GroupKey(u.guildId, u.userId, engine, channelId));
@@ -213,7 +213,7 @@ final class Transcripts {
 
   private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{(user|text|engine)}");
 
-  /** Fills {user}, {text} and {engine} in one pass, so values containing a placeholder are never re-expanded. */
+  /** {user}、{text}、{engine} を 1 回の走査で埋める。値にプレースホルダが含まれていても再展開しない。 */
   String render(String engine, String user, String text, boolean sharesDestination) {
     String fmt = c.messageFormat();
     if (sharesDestination && !fmt.contains("{engine}")) fmt = "[{engine}] " + fmt;
@@ -247,7 +247,7 @@ final class Transcripts {
     return Double.isFinite(score) ? Math.max(0, Math.min(1, score)) : null;
   }
 
-  /** Display names are user-controlled: neutralise Markdown (formatting, masked links, headings) in them. */
+  /** 表示名はユーザーが自由に決められるので、Markdown(装飾、マスクリンク、見出し)を無効化する。 */
   static String escapeName(String name) {
     return MarkdownSanitizer.escape(name).replaceAll("([\\[\\]()#>\\-])", "\\\\$1");
   }
@@ -485,7 +485,7 @@ final class Transcripts {
         ch.editMessageById(currentGroup.messageId, body).setAllowedMentions(List.of()).queue(
             x -> done.run(), err -> { log.warn("edit failed for guild {}, engine {}, channel {}", u.guildId, engine, channelId, err); done.run(); });
       }
-    } catch (RuntimeException ex) {  // JDA checks permissions synchronously (e.g. the bot lost Send Messages)
+    } catch (RuntimeException ex) {  // JDA は権限を同期的に検査する(例: bot が「メッセージを送信」を失った場合)
       log.warn("cannot post for guild {}, engine {}, channel {}", u.guildId, engine, channelId, ex);
       done.run();
     }

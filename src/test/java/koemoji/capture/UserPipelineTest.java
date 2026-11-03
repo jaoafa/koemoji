@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** VAD and job fan-out only (no ASR); needs the Silero model and a speech wav under data/models. */
+/** VAD とジョブの登録だけを確かめる(ASR は使わない)。data/models に Silero のモデルと音声入りの wav が必要。 */
 class UserPipelineTest {
   static final Path WAV = Path.of("data/models/test_silero_vad.wav");
   Db db;
@@ -32,7 +32,7 @@ class UserPipelineTest {
     p = new UserPipeline(c, db, "u", utts::add);
   }
 
-  /** Feeds 16 kHz mono samples as 20 ms chunks of 48 kHz stereo big-endian PCM, as JDA delivers. */
+  /** 16 kHz モノラルのサンプルを、JDA が渡す形式(48 kHz ステレオ big-endian PCM)の 20 ms 単位で流し込む。 */
   private void feed(short[] samples) throws Exception {
     var chunk = ByteBuffer.allocate(320 * 3 * 4);
     for (int off = 0; off + 320 <= samples.length; off += 320) {

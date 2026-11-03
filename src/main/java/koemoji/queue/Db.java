@@ -7,7 +7,7 @@ import java.nio.file.Files;
 import java.sql.*;
 import java.util.*;
 
-/** SQLite-backed durable job queue shared by capture and worker processes (WAL, atomic claim). */
+/** capture と worker のプロセスが共有する、SQLite によるジョブキュー。WAL を使い、ジョブの取得はアトミックに行う。 */
 public final class Db {
   private static final String DEFAULT_ENGINE = "";
 
@@ -94,7 +94,7 @@ public final class Db {
     catch (SQLException e) { throw new IllegalStateException(e); }
   }
 
-  /** Queued partials of the same utterance and engine are superseded by any newer job; finals are never dropped. */
+  /** 同じ発話・エンジンのキュー済み partial は、より新しいジョブで置き換える。final は捨てない。 */
   public void enqueue(String utt, int rev, boolean fin, String path, long bytes, String engine) {
     tx(c -> {
       c.setAutoCommit(false);
@@ -115,7 +115,7 @@ public final class Db {
     });
   }
 
-  /** Atomic claim: final first (oldest first), then newest partial first. */
+  /** ジョブをアトミックに取得する。final を古い順に先に、次に partial を新しい順に取る。 */
   public Optional<Job> claim(String worker, String engine) {
     return tx(c -> {
       long now = System.currentTimeMillis();
@@ -133,7 +133,7 @@ public final class Db {
     });
   }
 
-  /** Only the worker that claimed the job may settle it; a reaped worker's late result is ignored. */
+  /** ジョブを取得した worker だけが確定できる。reaper に回収された worker の遅れた結果は無視する。 */
   public void complete(long id, String worker, String text) {
     complete(id, worker, text, 0, 0);
   }
@@ -149,7 +149,7 @@ public final class Db {
     });
   }
 
-  /** Finals retry with exponential backoff up to retryMax; partials are disposable and just fail. */
+  /** final は retryMax まで指数バックオフで再試行する。partial は使い捨てなので、そのまま失敗にする。 */
   public void fail(Job j, String worker, String err, int retryMax, int backoffMs) {
     tx(c -> {
       long now = System.currentTimeMillis();
@@ -165,8 +165,8 @@ public final class Db {
   }
 
   /**
-   * Crash recovery: jobs stuck in processing (worker died) go back to the queue; ones that already used up
-   * retryMax attempts are failed instead, so a job that keeps killing its worker cannot loop forever.
+   * クラッシュからの回復。processing のまま止まったジョブ(worker の異常終了)はキューへ戻す。
+   * すでに retryMax 回使い切ったジョブは失敗にし、worker を落とし続けるジョブが無限に繰り返されないようにする。
    */
   public int requeueStale(long timeoutMs, int retryMax) {
     return tx(c -> {
@@ -208,14 +208,14 @@ public final class Db {
   }
 
   /**
-   * Utterances whose finals all settled longer ago than the TTLs: [utteranceId, audioPath]. An utterance that never
-   * got a final (the process stopped mid-utterance) is reclaimed once its newest job is older than the failed TTL.
+   * すべての final が TTL より前に確定した発話を [utteranceId, audioPath] で返す。
+   * final のない発話(発話の途中でプロセスが止まった場合)は、最新のジョブが失敗時の TTL より古くなったら回収対象にする。
    */
   public List<String[]> expired(long doneTtlMs, long failedTtlMs) {
     return tx(c -> {
       var out = new ArrayList<String[]>();
       long now = System.currentTimeMillis();
-      // all engines' finals are settled; the TTL clock starts at the last one (longer TTL if any failed)
+      // 全エンジンの final が確定済みであること。TTL は最後に確定した final から数え、1 つでも失敗していれば長い方を使う
       try (var p = c.prepareStatement("""
           SELECT utterance_id, MIN(audio_path) FROM jobs GROUP BY utterance_id
           HAVING SUM(is_final=1 AND status IN ('queued','processing'))=0 AND CASE
@@ -237,7 +237,7 @@ public final class Db {
     });
   }
 
-  /** Job counts keyed by "engine|status". */
+  /** "engine|status" をキーにしたジョブ数。 */
   public Map<String, Long> counts() {
     return tx(c -> {
       var out = new TreeMap<String, Long>();
@@ -307,12 +307,12 @@ public final class Db {
     });
   }
 
-  /** Default transcript channel, or null when the guild has no default route. */
+  /** default の投稿先チャンネル。サーバーに default の設定がなければ null。 */
   public Long channelOf(long guild) {
     return routeOf(guild, null);
   }
 
-  /** Explicit engine channel, falling back to the guild's default channel. */
+  /** engine 個別の投稿先チャンネル。なければサーバーの default を使う。 */
   public Long routeOf(long guild, String engine) {
     return tx(c -> {
       try (var p = c.prepareStatement("SELECT channel_id FROM guild_channels WHERE guild_id=? AND engine IN (?, ?) ORDER BY CASE WHEN engine=? THEN 0 ELSE 1 END LIMIT 1")) {
@@ -325,7 +325,7 @@ public final class Db {
     });
   }
 
-  /** Resolved channels for configured engines; engines without a route are absent. */
+  /** 指定した engine ごとの投稿先チャンネル。投稿先のない engine は含まれない。 */
   public Map<String, Long> routesOf(long guild, Collection<String> engines) {
     return tx(c -> {
       var saved = new HashMap<String, Long>();
