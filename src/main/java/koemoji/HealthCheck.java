@@ -11,7 +11,7 @@ public final class HealthCheck {
     System.exit(check(Config.fromEnv().healthPort()));
   }
 
-  /** HEALTH_PORT に対する終了コード。0(ヘルスサーバーが無効)は確認するものがないことを表す。 */
+  /** HEALTH_PORT に対する終了コード。ヘルスサーバーが無効な場合は確認するものがないので 0 を返す。 */
   static int check(int port) throws Exception {
     if (port <= 0) return 0;
     var res = HttpClient.newHttpClient().send(

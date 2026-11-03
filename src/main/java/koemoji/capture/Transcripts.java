@@ -113,7 +113,7 @@ final class Transcripts {
       Utt u = utts.get(id);
       if (u == null) { list.forEach(d -> consumed.add(d.id())); return; }
       Msg m = u.msgs.computeIfAbsent(engine, k -> new Msg());
-      if (m.group != null && m.group.inflight) return;  // 行は未消化のまま残す。次の tick では最新のものだけが問題になる
+      if (m.group != null && m.group.inflight) return;  // 行は未消化のまま残す。次の tick では最新の行だけを処理すればよい
       Long channelId = u.routes.get(engine);
       if (m.group == null && channelId != null) {
         Group candidate = displayGroups.get(new GroupKey(u.guildId, u.userId, engine, channelId));

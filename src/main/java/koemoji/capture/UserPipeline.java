@@ -14,8 +14,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
- * ユーザーごとの音声パイプライン。48 kHz ステレオ big-endian PCM を 16 kHz モノラルにし、Silero VAD で発話を検出して
- * 発話ファイル(追記のみの s16le)へ書き、partial/final のジョブをキューへ登録する。
+ * ユーザーごとの音声パイプライン。48 kHz ステレオ big-endian PCM を 16 kHz モノラルにし、Silero VAD で発話を検出して発話ファイル(追記のみの s16le)へ書き、partial/final のジョブをキューへ登録する。
  * 音声は JDA のスレッド、tick() はスケジューラのスレッドから呼ばれるため、メソッドはすべて synchronized にしている。
  */
 public final class UserPipeline implements Closeable {
@@ -32,7 +31,7 @@ public final class UserPipeline implements Closeable {
   private final ArrayDeque<short[]> preroll = new ArrayDeque<>();
   private final short[] cur = new short[WIN];
 
-  private static final int DECIMATE = 3;       // 48 kHz から 16 kHz への間引き
+  private static final int DECIMATE = 3;       // 48 kHz から 16 kHz へ。3 サンプルの平均を 1 サンプルにする
   private int resampleSum, resampleCount;
 
   private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(UserPipeline.class);
@@ -113,7 +112,7 @@ public final class UserPipeline implements Closeable {
       return;
     }
     write(cur);
-    if (utt == null) return;  // 書き込みに失敗して発話を破棄済み
+    if (utt == null) return;  // 書き込みに失敗して発話を閉じ済み
     silenceRun = speech ? 0 : silenceRun + 1;
     if (silenceRun * WIN_MS >= c.vadEndSilenceMs()) finish();
     else if (bytes >= c.maxUtteranceMs() * 32L) { finish(); begin(); }  // 続きは新しい発話として扱う
@@ -142,7 +141,7 @@ public final class UserPipeline implements Closeable {
   }
 
   /**
-   * ディスクの障害時に、パケットのたびに失敗せず、書き込みをやめて次の発話を待つ。
+   * ディスク障害時は、パケットのたびに失敗しないよう、書き込みをやめて次の発話を待つ。
    * partial をすでにキューへ登録していれば、書き出し済みの先頭部分に対する final で発話を閉じ、通常の経路で行とファイルを回収する。
    * 登録していなければ、ファイルを参照するものがないので削除する。
    */
@@ -178,7 +177,7 @@ public final class UserPipeline implements Closeable {
 
   /** 設定されたエンジンごとに 1 つずつジョブを登録する(エンジン間の比較用)。リビジョンはエンジン間で共通。 */
   private void enqueueAll(boolean fin) {
-    if (rev == 0) onUtterance.accept(utt, utteranceStartedAtMs);  // ジョブができてから、発話を登録する
+    if (rev == 0) onUtterance.accept(utt, utteranceStartedAtMs);  // 最初のジョブを登録する直前に 1 回だけ、発話を通知する
     rev++;
     for (String e : c.engines()) db.enqueue(utt, rev, fin, path.toString(), bytes, e);
   }

@@ -35,8 +35,7 @@ public final class Worker {
   public static Worker start(Config c, Db db) {
     Worker worker = new Worker();
     String host = System.getenv().getOrDefault("HOSTNAME", "local") + "-" + ProcessHandle.current().pid();
-    // エンジンはスレッドを起動する前にここで作る。モデルがない・不正な場合に、worker のスレッドが黙って落ちるのではなく、
-    // 起動時にプロセスが失敗して再起動ポリシーが働くようにするため。
+    // エンジンはスレッドを起動する前にここで作る。モデルがない・不正な場合に worker のスレッドが黙って落ちず、起動時にプロセスが失敗して再起動ポリシーが働くようにするため。
     for (int i = 0; i < c.workerEngines().size(); i++) {
       String id = host + "-" + i, name = c.workerEngines().get(i);
       AsrEngine engine = AsrEngine.create(name, c);
@@ -156,7 +155,7 @@ public final class Worker {
     return out;
   }
 
-  /** 先頭の snapshotBytes だけを読み、伸び続ける録音ファイルを不変のスナップショットとして扱う。 */
+  /** 先頭の bytes バイトだけを読み、伸び続ける録音ファイルを不変のスナップショットとして扱う。 */
   public static float[] read(String path, long bytes) throws IOException {
     byte[] b = new byte[(int) bytes];
     try (var f = new RandomAccessFile(path, "r")) { f.readFully(b); }
