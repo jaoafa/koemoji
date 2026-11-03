@@ -30,7 +30,7 @@ import club.minnced.discord.jdave.interop.JDaveSessionFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Discord side: auto join/move/leave (jaoafa/ChatWatcher style), /register /unregister /join /leave, and per-user audio capture; ASR results are posted by {@link Transcripts}. */
+/** Discord 側の処理。自動参加・移動・退出(jaoafa/ChatWatcher 方式)、/register /unregister /join /leave、ユーザーごとの音声取得を担う。認識結果の投稿は {@link Transcripts} が行う。 */
 public final class Bot extends ListenerAdapter {
   private static final Logger log = LoggerFactory.getLogger(Bot.class);
 
@@ -87,7 +87,7 @@ public final class Bot extends ListenerAdapter {
         Commands.slash("leave", "Leave the voice channel")
             .setContexts(guildOnly).setDefaultPermissions(admin)
     ).queue();
-    // ChatWatcher registered /chatwatcher per guild; koemoji defines only global commands, so clear the old ones
+    // ChatWatcher はサーバーごとに /chatwatcher を登録していた。koemoji はグローバルコマンドだけを定義するので、古いコマンドを消す
     jda.getGuilds().forEach(g -> g.updateCommands().queue(null, err -> log.warn("could not clear guild commands of {}", g.getId(), err)));
     transcripts = new Transcripts(c, db, id -> jda.getChannelById(MessageChannel.class, id));
     sched.scheduleWithFixedDelay(() -> guard(() -> handlers.values().forEach(Handler::tick)), 100, 100, TimeUnit.MILLISECONDS);
@@ -185,7 +185,7 @@ public final class Bot extends ListenerAdapter {
 
   enum Move { NONE, JOIN, LEAVE }
 
-  /** What to do when a human's voice state changed; counts are humans in the bot's channel / the joined channel after the change. */
+  /** 人間のボイス状態が変わったときの動作を決める。人数は、変更後の bot のいるチャンネルと参加先チャンネルにいる人間の数。 */
   static Move decide(boolean inChannel, boolean leftBotChannel, boolean joinedAny, boolean joinedAfk, long botChannelHumans, long joinedHumans) {
     boolean joinable = joinedAny && !joinedAfk;
     if (!inChannel) return joinable ? Move.JOIN : Move.NONE;
@@ -194,7 +194,7 @@ public final class Bot extends ListenerAdapter {
     return botChannelHumans == 0 ? Move.LEAVE : Move.NONE;
   }
 
-  /** Join when idle, follow users to a busier channel, leave when the last human leaves. */
+  /** どこにも参加していなければ参加し、人間の多いチャンネルへ追従し、最後の人間が抜けたら退出する。 */
   @Override public void onGuildVoiceUpdate(GuildVoiceUpdateEvent e) {
     Guild g = e.getGuild();
     if (e.getMember().getUser().isBot()) {
@@ -212,7 +212,7 @@ public final class Bot extends ListenerAdapter {
     }
   }
 
-  /** Receives JDA audio and fans it out to per-user pipelines. */
+  /** JDA の音声を受け取り、ユーザーごとのパイプラインへ振り分ける。 */
   private final class Handler implements AudioReceiveHandler {
     private final Guild guild;
     private final Map<Long, UserPipeline> users = new ConcurrentHashMap<>();
@@ -236,7 +236,7 @@ public final class Bot extends ListenerAdapter {
 
     void tick() {
       users.values().forEach(p -> {
-        try { p.tick(); } catch (Throwable t) { log.warn("tick failed", t); }  // one user must not stop the others
+        try { p.tick(); } catch (Throwable t) { log.warn("tick failed", t); }  // 1 人の失敗で他のユーザーの処理を止めない
       });
       users.values().removeIf(p -> {
         if (!p.idle(IDLE_EVICT_MS)) return false;
@@ -249,7 +249,7 @@ public final class Bot extends ListenerAdapter {
       boolean succeeded = true;
       for (UserPipeline p : users.values()) {
         try { succeeded &= p.closeForDrain(); }
-        catch (Throwable t) { succeeded = false; log.warn("close failed", t); }  // the remaining users must still be closed
+        catch (Throwable t) { succeeded = false; log.warn("close failed", t); }  // 残りのユーザーも閉じる必要がある
       }
       users.clear();
       return succeeded;

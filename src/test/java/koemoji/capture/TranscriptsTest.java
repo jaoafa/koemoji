@@ -30,7 +30,7 @@ class TranscriptsTest {
   Db db;
   Transcripts t;
 
-  /** Channel double recording sends/edits/deletes; every JDA action chain completes synchronously. */
+  /** 送信・編集・削除を記録するチャンネルの代役。JDA のアクションはすべて同期的に完了する。 */
   private MessageChannel channel() {
     return channel(CHANNEL, false);
   }

@@ -13,11 +13,11 @@ import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Downloads missing models into MODELS_DIR on startup; the directory doubles as the cache. */
+/** 起動時に、足りないモデルを MODELS_DIR へダウンロードする。このディレクトリがそのままキャッシュになる。 */
 public final class Models {
   private static final Logger log = LoggerFactory.getLogger(Models.class);
   private static final String BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/";
-  /** Engines whose release archive name differs from the directory name. */
+  /** リリースのアーカイブ名がディレクトリ名と異なるエンジン。 */
   private static final Map<String, String> ARCHIVE =
       Map.of("sensevoice", "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17");
 
@@ -63,7 +63,7 @@ public final class Models {
     if (Files.isDirectory(target)) return;
     String archive = ARCHIVE.getOrDefault(engine, dir);
     log.info("downloading model {} ({})", engine, archive);
-    // Extract beside the target and rename last, so an interrupted download never leaves a half-filled cache entry.
+    // 展開先の隣で展開し、最後に名前を変える。ダウンロードが中断しても、中途半端なキャッシュが残らない。
     Path tmp = c.modelsDir().resolve(dir + ".part");
     deleteTree(tmp);
     try (InputStream in = URI.create(BASE + archive + ".tar.bz2").toURL().openStream()) {
@@ -75,9 +75,9 @@ public final class Models {
     Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE);
   }
 
-  /** Unpacks a .tar.bz2 into dest, dropping the archive's single top-level directory. */
+  /** .tar.bz2 を dest へ展開する。アーカイブ直下の唯一のディレクトリは取り除く。 */
   static void extract(InputStream tarBz2, Path dest) throws IOException {
-    Path root = dest.toAbsolutePath().normalize();  // the traversal check below needs a normalized root
+    Path root = dest.toAbsolutePath().normalize();  // 後段のパストラバーサル検査に、正規化したルートが必要
     try (var in = new TarArchiveInputStream(new BZip2CompressorInputStream(new java.io.BufferedInputStream(tarBz2)))) {
       for (TarArchiveEntry e; (e = in.getNextEntry()) != null; ) {
         Path rel = Path.of(e.getName());

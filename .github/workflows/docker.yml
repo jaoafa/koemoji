@@ -86,7 +86,7 @@ jobs:
           { imageName: "${{ github.repository }}", context: ".", file: "Dockerfile", packageName: "${{ github.event.repository.name }}" },
           { imageName: "${{ github.repository }}-updater", context: ".", file: "updater/Dockerfile", packageName: "${{ github.event.repository.name }}-updater" }
         ]
-      # sherpa-onnx native libs are linux-x64 only
+      # sherpa-onnx のネイティブライブラリは linux-x64 のみ
       platforms: linux/amd64
       allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository }}
     secrets:

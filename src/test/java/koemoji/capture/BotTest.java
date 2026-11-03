@@ -12,7 +12,7 @@ import java.nio.file.Files;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
-/** decide(inChannel, leftBotChannel, joinedAny, joinedAfk, botChannelHumans, joinedHumans) */
+/** Bot.decide(inChannel, leftBotChannel, joinedAny, joinedAfk, botChannelHumans, joinedHumans) の判定を確かめる。 */
 class BotTest {
   @Test void idleBotJoinsTheChannelAHumanJoined() {
     assertEquals(JOIN, decide(false, false, true, false, 0, 1));

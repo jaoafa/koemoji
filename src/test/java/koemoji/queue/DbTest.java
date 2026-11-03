@@ -112,7 +112,7 @@ class DbTest {
     enqueue("u1", 1, false, "a");
     db.complete(db.claim("w", "a").get().id(), "w", "x");
     Thread.sleep(5);
-    assertTrue(db.expired(60_000, 60_000).isEmpty());  // still young: the utterance may be open
+    assertTrue(db.expired(60_000, 60_000).isEmpty());  // まだ新しい: 発話が継続中かもしれない
     assertEquals(1, db.expired(0, 0).size());
   }
 
@@ -200,7 +200,7 @@ class DbTest {
   @Test void staleJobsAreFailedOnceRetriesAreUsedUp() {
     enqueue("u1", 1, true, "e");
     db.claim("dead-worker", "e");
-    assertEquals(1, db.requeueStale(-1000, 0));  // retry_count 0 >= retryMax 0: give up instead of requeueing
+    assertEquals(1, db.requeueStale(-1000, 0));  // retry_count 0 >= retryMax 0 なので、キューへ戻さず失敗にする
     assertTrue(db.claim("w", "e").isEmpty());
     assertEquals("failed", db.pollDone().get(0).status());
   }

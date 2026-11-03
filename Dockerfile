@@ -16,7 +16,7 @@ ARG GIT_REVISION=unknown
 COPY --from=build /src/target/koemoji.jar /app/koemoji.jar
 LABEL org.opencontainers.image.version=$APPLICATION_VERSION \
       org.opencontainers.image.revision=$GIT_REVISION
-# models are downloaded on first start into /data/models (persisted with the /data volume)
+# モデルは初回起動時に /data/models へダウンロードされる (/data ボリュームで永続化される)
 ENV MODELS_DIR=/data/models VAD_MODEL=/data/models/silero_vad.onnx AUDIO_DIR=/data/audio QUEUE_DB=/data/queue.db
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
   CMD ["java","-cp","/app/koemoji.jar","koemoji.HealthCheck"]
