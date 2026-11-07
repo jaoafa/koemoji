@@ -1,4 +1,4 @@
-FROM maven:3.10.0-eclipse-temurin-25@sha256:721fefa7187746ff892b2a178eb4cac3292f89a80f76ef25c04da655f88619b8 AS build
+FROM maven:3.10.0-eclipse-temurin-25@sha256:047a82fc82c613266cfb1b66fd920be9c8ba51fd67edc68245e4542768f45e36 AS build
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git \
