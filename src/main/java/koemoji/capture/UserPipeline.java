@@ -12,6 +12,7 @@ import java.util.ArrayDeque;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
 /**
  * ユーザーごとの音声パイプライン。48 kHz ステレオ big-endian PCM を 16 kHz モノラルにし、Silero VAD で発話を検出して発話ファイル(追記のみの s16le)へ書き、partial/final のジョブをキューへ登録する。
@@ -22,8 +23,11 @@ public final class UserPipeline implements Closeable {
   private static final int WIN_MS = 32;
   private static final int GAP_MS = 200;
 
+  private static final int PCM_BYTES_PER_MS = 192;  // 48 kHz ステレオ 16 bit
+
   private final Config c;
   private final Db db;
+  private final LongSupplier clock;
   private final BiConsumer<String, Long> onUtterance;
   private final VadDetector vad;
   private final float[] win = new float[WIN];
@@ -46,6 +50,7 @@ public final class UserPipeline implements Closeable {
   private long bytes, snapBytes;
   private int rev;
   private long lastPartialMs, lastAudioMs;
+  private long driftMs, lastPacketMs;
   private boolean closed;
   private boolean finalizationSucceeded = true;
 
@@ -54,16 +59,20 @@ public final class UserPipeline implements Closeable {
   }
 
   static UserPipeline withUtteranceStartTime(Config c, Db db, String name, BiConsumer<String, Long> onUtterance) {
-    return new UserPipeline(c, db, name, onUtterance, silero(c));
+    return new UserPipeline(c, db, name, onUtterance, silero(c), System::currentTimeMillis);
   }
 
   UserPipeline(Config c, Db db, String name, Consumer<String> onUtterance, VadDetector vad) {
-    this(c, db, name, (id, startedAtMs) -> onUtterance.accept(id), vad);
+    this(c, db, name, onUtterance, vad, System::currentTimeMillis);
   }
 
-  private UserPipeline(Config c, Db db, String name, BiConsumer<String, Long> onUtterance, VadDetector vad) {
+  UserPipeline(Config c, Db db, String name, Consumer<String> onUtterance, VadDetector vad, LongSupplier clock) {
+    this(c, db, name, (id, startedAtMs) -> onUtterance.accept(id), vad, clock);
+  }
+
+  private UserPipeline(Config c, Db db, String name, BiConsumer<String, Long> onUtterance, VadDetector vad, LongSupplier clock) {
     this.name = name; this.c = c; this.db = db; this.onUtterance = onUtterance;
-    this.vad = vad;
+    this.vad = vad; this.clock = clock;
   }
 
   private static VadDetector silero(Config c) {
@@ -80,9 +89,11 @@ public final class UserPipeline implements Closeable {
   /** @param pcm 48 kHz ステレオ 16 bit の big-endian(JDA の出力形式) */
   public synchronized void accept(byte[] pcm) {
     if (closed) return;  // VAD はネイティブで close() が解放するため、遅れて届いたパケットで触らない
-    long now = System.currentTimeMillis();
+    long now = clock.getAsLong();
     if (now - lastAudioMs > GAP_MS) { winFill = 0; resampleSum = 0; resampleCount = 0; }  // 無音の間、Discord は何も送ってこない
+    else if (utt != null) driftMs = Math.max(0, driftMs + (now - lastAudioMs) - lastPacketMs);  // 復号に失敗したパケットは届かず、遅れが戻らずに残る
     lastAudioMs = now;
+    lastPacketMs = pcm.length / PCM_BYTES_PER_MS;
     ByteBuffer b = ByteBuffer.wrap(pcm).order(ByteOrder.BIG_ENDIAN);
     while (b.remaining() >= 4) {
       resampleSum += (b.getShort() + b.getShort()) / 2;
@@ -124,9 +135,9 @@ public final class UserPipeline implements Closeable {
     Path p = c.audioDir().resolve(id + ".pcm");
     try { out = new BufferedOutputStream(new FileOutputStream(p.toFile())); }
     catch (IOException e) { log.warn("cannot create {}; dropping this utterance", p, e); return false; }
-    utt = id; path = p; utteranceStartedAtMs = System.currentTimeMillis();
-    bytes = snapBytes = 0; rev = 0; silenceRun = 0; speechRun = 0;
-    lastPartialMs = System.currentTimeMillis();
+    utt = id; path = p; utteranceStartedAtMs = clock.getAsLong();
+    bytes = snapBytes = 0; rev = 0; silenceRun = 0; speechRun = 0; driftMs = 0;
+    lastPartialMs = utteranceStartedAtMs;
     return true;
   }
 
@@ -177,6 +188,7 @@ public final class UserPipeline implements Closeable {
 
   /** 設定されたエンジンごとに 1 つずつジョブを登録する(エンジン間の比較用)。リビジョンはエンジン間で共通。 */
   private void enqueueAll(boolean fin) {
+    if (fin) log.info("utterance {} user {} audio_ms={} est_lost_ms={}", utt, name, bytes / 32, driftMs);
     if (rev == 0) onUtterance.accept(utt, utteranceStartedAtMs);  // 最初のジョブを登録する直前に 1 回だけ、発話を通知する
     rev++;
     for (String e : c.engines()) db.enqueue(utt, rev, fin, path.toString(), bytes, e);
@@ -185,7 +197,7 @@ public final class UserPipeline implements Closeable {
   /** 定期的に呼ばれる。partial のジョブを登録し、ユーザーのパケットが途絶えたら発話を終える。 */
   public synchronized void tick() {
     if (utt == null) return;
-    long now = System.currentTimeMillis();
+    long now = clock.getAsLong();
     if (now - lastAudioMs >= c.vadEndSilenceMs()) { finish(); return; }
     if (now - lastPartialMs >= c.partialMs() && bytes > snapBytes) {
       try { out.flush(); } catch (IOException e) { abort(e); return; }
@@ -196,7 +208,7 @@ public final class UserPipeline implements Closeable {
 
   /** 発話が開いておらず、idleMs 以上音声が届いていなければ true。パイプラインを解放してよい。 */
   public synchronized boolean idle(long idleMs) {
-    return utt == null && System.currentTimeMillis() - lastAudioMs > idleMs;
+    return utt == null && clock.getAsLong() - lastAudioMs > idleMs;
   }
 
   @Override public synchronized void close() {
