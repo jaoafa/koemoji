@@ -19,6 +19,24 @@ class ConfigTest {
     assertEquals(300, c.minUtteranceMs());
   }
 
+  @Test void queueAgeThresholdsDefaultAndAcceptZeroToDisable() {
+    var defaults = of(Map.of());
+    assertEquals(1800, defaults.healthMaxQueueAgeSec());
+    assertEquals(300, defaults.queueStallWarnSec());
+    var disabled = of(Map.of("HEALTH_MAX_QUEUE_AGE_SEC", "0", "QUEUE_STALL_WARN_SEC", "0"));
+    assertEquals(0, disabled.healthMaxQueueAgeSec());
+    assertEquals(0, disabled.queueStallWarnSec());
+  }
+
+  @Test void queueAgeThresholdsRejectNegativeAndNonIntegerValues() {
+    assertEquals("HEALTH_MAX_QUEUE_AGE_SEC must be >= 0: -1",
+        assertThrows(IllegalArgumentException.class, () -> of(Map.of("HEALTH_MAX_QUEUE_AGE_SEC", "-1"))).getMessage());
+    assertEquals("QUEUE_STALL_WARN_SEC must be >= 0: -5",
+        assertThrows(IllegalArgumentException.class, () -> of(Map.of("QUEUE_STALL_WARN_SEC", "-5"))).getMessage());
+    assertEquals("HEALTH_MAX_QUEUE_AGE_SEC must be an integer: abc",
+        assertThrows(NumberFormatException.class, () -> of(Map.of("HEALTH_MAX_QUEUE_AGE_SEC", "abc"))).getMessage());
+  }
+
   @Test void vadSilenceThresholdCanBeOverridden() {
     assertEquals(700, of(Map.of("VAD_END_SILENCE_MS", "700")).vadEndSilenceMs());
     assertEquals(450, of(Map.of("MIN_UTTERANCE_MS", "450")).minUtteranceMs());

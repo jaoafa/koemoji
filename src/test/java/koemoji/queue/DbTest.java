@@ -140,6 +140,43 @@ class DbTest {
     assertTrue(db.claim("w", "e").isEmpty());
   }
 
+  @Test void oldestQueuedAgeIsPerEngineAndIgnoresNonQueuedJobs() throws Exception {
+    assertEquals(Map.of(), db.oldestQueuedAgeMs(System.currentTimeMillis()));
+    long before = System.currentTimeMillis();
+    enqueue("u1", 1, true, "a");
+    long after = System.currentTimeMillis();
+    Thread.sleep(20);
+    enqueue("u2", 1, true, "a");
+    enqueue("u3", 1, true, "b");
+    long now = System.currentTimeMillis() + 5_000;
+    var ages = db.oldestQueuedAgeMs(now);
+    assertEquals(java.util.Set.of("a", "b"), ages.keySet());
+    assertTrue(ages.get("a") >= now - after && ages.get("a") <= now - before, "a=" + ages.get("a"));
+    assertTrue(ages.get("b") < ages.get("a"));
+
+    db.claim("w", "a");
+    db.claim("w", "a");
+    assertEquals(java.util.Set.of("b"), db.oldestQueuedAgeMs(now).keySet());
+    assertEquals(0L, db.oldestQueuedAgeMs(0).get("b"));
+  }
+
+  @Test void failedSinceCountsPerEngineFromTheGivenInstantInclusive() throws Exception {
+    assertEquals(Map.of(), db.failedSince(0));
+    enqueue("u1", 1, false, "e");
+    db.fail(db.claim("w", "e").get(), "w", "boom", 0, 0);
+    enqueue("u2", 1, false, "other");
+    var ok = db.claim("w", "other").get();
+    db.complete(ok.id(), "w", "text");
+    long completedAt;
+    try (var c = DriverManager.getConnection("jdbc:sqlite:" + queueDb); var s = c.createStatement();
+         var r = s.executeQuery("SELECT completed_at FROM jobs WHERE status='failed'")) {
+      assertTrue(r.next());
+      completedAt = r.getLong(1);
+    }
+    assertEquals(Map.of("e", 1L), db.failedSince(completedAt));
+    assertEquals(Map.of(), db.failedSince(completedAt + 1));
+  }
+
   @Test void backoffDelaysTheRetry() {
     enqueue("u1", 1, true, "e");
     db.fail(db.claim("w", "e").get(), "w", "boom", 3, 60_000);
