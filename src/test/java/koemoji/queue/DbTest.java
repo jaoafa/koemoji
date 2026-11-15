@@ -13,13 +13,81 @@ import org.junit.jupiter.api.Test;
 
 class DbTest {
   Db db;
+  Config cfg;
   Path queueDb;
 
   @BeforeEach void setUp() throws Exception {
     var tmp = Files.createTempDirectory("cwdb");
     queueDb = tmp.resolve("q.db");
     var env = Map.of("AUDIO_DIR", tmp.resolve("audio").toString(), "QUEUE_DB", queueDb.toString());
-    db = new Db(Config.of(env::get));
+    cfg = Config.of(env::get);
+    db = new Db(cfg);
+  }
+
+  private java.sql.Connection holdWriteLock() throws Exception {
+    var h = DriverManager.getConnection("jdbc:sqlite:" + queueDb);
+    try (var s = h.createStatement()) { s.execute("BEGIN IMMEDIATE"); }
+    return h;
+  }
+
+  private static void release(java.sql.Connection h) throws Exception {
+    try (var s = h.createStatement()) { s.execute("ROLLBACK"); }
+  }
+
+  @Test void journalModeIsWalAfterInit() throws Exception {
+    try (var c = DriverManager.getConnection("jdbc:sqlite:" + queueDb); var s = c.createStatement(); var r = s.executeQuery("PRAGMA journal_mode")) {
+      assertTrue(r.next());
+      assertEquals("wal", r.getString(1));
+    }
+  }
+
+  @Test void enqueueSucceedsWhenLockIsReleasedBeforeTheRetry() throws Exception {
+    var busy = new Db(cfg, 300);
+    try (var h = holdWriteLock()) {
+      var f = java.util.concurrent.CompletableFuture.runAsync(() -> busy.enqueue("u1", 1, true, "/x/u1", 100, "e"));
+      Thread.sleep(400);
+      release(h);
+      f.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    }
+    assertEquals(1L, busy.counts().get("e|queued"));
+  }
+
+  @Test void completeSucceedsWhenLockIsReleasedBeforeTheRetry() throws Exception {
+    var busy = new Db(cfg, 300);
+    busy.enqueue("u1", 1, true, "/x/u1", 100, "e");
+    busy.claim("w", "e");
+    try (var h = holdWriteLock()) {
+      var f = java.util.concurrent.CompletableFuture.runAsync(() -> busy.complete(1, "w", "こんにちは"));
+      Thread.sleep(400);
+      release(h);
+      f.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    }
+    assertEquals(1L, busy.counts().get("e|completed"));
+    assertEquals("こんにちは", busy.pollDone().get(0).text());
+  }
+
+  @Test void enqueueFailsWithBusyAfterOneRetryWhileLockIsHeld() throws Exception {
+    var busy = new Db(cfg, 300);
+    try (var h = holdWriteLock()) {
+      long start = System.nanoTime();
+      var e = assertThrows(IllegalStateException.class, () -> busy.enqueue("u1", 1, true, "/x/u1", 100, "e"));
+      long tookMs = (System.nanoTime() - start) / 1_000_000;
+      var cause = assertInstanceOf(org.sqlite.SQLiteException.class, e.getCause());
+      assertEquals(5, cause.getResultCode().code & 0xff);
+      assertTrue(tookMs >= 600, "took " + tookMs + " ms");
+      release(h);
+    }
+    assertTrue(busy.counts().isEmpty());
+  }
+
+  @Test void nonBusyFailureIsNotRetried() {
+    var calls = new java.util.concurrent.atomic.AtomicInteger();
+    var e = assertThrows(IllegalStateException.class, () -> db.txRetryingBusy("x", c -> {
+      calls.incrementAndGet();
+      throw new java.sql.SQLException("boom");
+    }));
+    assertEquals("boom", e.getCause().getMessage());
+    assertEquals(1, calls.get());
   }
 
   private void enqueue(String utt, int rev, boolean fin, String engine) { db.enqueue(utt, rev, fin, "/x/" + utt, 100, engine); }
