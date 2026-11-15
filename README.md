@@ -178,6 +178,8 @@ docker compose run --rm koemoji replay \
 - `/metrics` は Prometheus 形式で、`koemoji_jobs{engine,status}`(キューの深さと結果)、`koemoji_workers_alive`、エンジンごとの認識回数と所要時間を返します。
 - 起動時に、未知のエンジン名は即エラーになります。`MODE=all` では、ワーカーのないエンジンもエラーです。`MODE=capture` ではワーカー側が分からないため、ワーカーコンテナの `WORKER_ENGINES` が `ASR_ENGINES` を網羅するようにしてください。
 - ユーザー別の音声パイプライン(VAD)は、音声が 5 分途切れると解放されます。
+- DAVE の復号に失敗したパケットは、koemoji に届く前に捨てられます。発話の final を登録するたびに、受信間隔から推定した音声の欠落量を `utterance <発話 ID> user <ユーザー名> audio_ms=<発話の長さ> est_lost_ms=<推定した欠落量>` の形式でログに出します。欠落量の大きい発話は `docker compose logs --no-log-prefix koemoji | grep est_lost_ms | sed -E 's/.*utterance ([^ ]+) user .* est_lost_ms=([0-9]+)$/\2 \1/' | sort -rn | head` で、欠落量と発話 ID の組を大きい順に並べて探せます。推定は粗く、ネットワークの揺れと、200 ms 以内の話者の間も欠落に数えます。間隔が 200 ms を超えると無音とみなすので、10 パケット (200 ms) 以上の連続した欠落は数えません。
+- 発話 ID から認識結果を見るには、`SELECT engine, revision, text FROM jobs WHERE utterance_id = '<発話 ID>' AND is_final = 1 AND status = 'completed'` を `queue.db` に実行します。`jobs` の行と `audio/<発話 ID>.pcm` は、すべての final が確定してから `AUDIO_TTL_MIN` (失敗があれば `FAILED_AUDIO_TTL_MIN`) が経つと、一緒に消えます。欠落の大きい発話を比べるときは、この間に実行してください。replay で認識し直すにも、同じ期間内に音声と `queue.db` をコピーします。
 - `updater` は GitHub Releases の stable version を 10 分ごとに確認し、latest tag を使うアプリ service だけを更新します。version 固定や digest 固定の service は対象外です。更新前に音声・キュー・Discord 投稿を drain し、更新後の health check に失敗した場合は直前の image に戻します。drain が 60 秒以内に完了しない場合は更新を中止します。
 - 発話の final enqueue に失敗した場合もコンテナを置換せず、プロセスが稼働している間は自動更新を停止します。DB の状態とログを確認してから koemoji コンテナを再起動すると、更新制御が再び有効になります。
 - updater は Docker socket と Compose 設定を読み取り専用で mount します。Docker socket はホスト上の root 相当の操作権限を与え、Compose 設定には `.env` の Discord token が含まれます。信頼できる管理者だけがホストと Compose 設定を変更できる環境で実行してください。`UPDATE_CONTROL_SECRET` は推測困難な値を `.env` に保存し、ファイル権限を制限してください。
