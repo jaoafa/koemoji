@@ -17,13 +17,28 @@ public final class Db {
 
   public interface Sql<T> { T run(Connection c) throws SQLException; }
 
+  private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(Db.class);
+  private static final int SQLITE_BUSY = 5;
+  private static final long BUSY_RETRY_WAIT_MS = 200;
+
   private final String url;
+  private final int busyTimeoutMs;
 
   public Db(Config cfg) {
+    this(cfg, 10_000);
+  }
+
+  Db(Config cfg, int busyTimeoutMs) {
     try {
       mkdirs(cfg);
     } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
     url = "jdbc:sqlite:" + cfg.queueDb();
+    this.busyTimeoutMs = busyTimeoutMs;
+    // journal_mode は DB に永続する。接続のたびに適用するとロックを要するため、ここで 1 回だけ設定する
+    tx(c -> {
+      try (Statement s = c.createStatement()) { s.execute("PRAGMA journal_mode=WAL"); }
+      return null;
+    });
     tx(c -> {
       c.setAutoCommit(false);
       try (Statement s = c.createStatement()) {
@@ -83,8 +98,7 @@ public final class Db {
 
   private Connection conn() throws SQLException {
     Properties p = new Properties();
-    p.setProperty("busy_timeout", "10000");
-    p.setProperty("journal_mode", "WAL");
+    p.setProperty("busy_timeout", String.valueOf(busyTimeoutMs));
     p.setProperty("synchronous", "NORMAL");
     return DriverManager.getConnection(url, p);
   }
@@ -94,9 +108,26 @@ public final class Db {
     catch (SQLException e) { throw new IllegalStateException(e); }
   }
 
+  /** SQLITE_BUSY のときだけ、新しい接続で 1 回やり直す。f はロールバックされても再実行して安全な処理に限る。 */
+  <T> T txRetryingBusy(String op, Sql<T> f) {
+    try {
+      return tx(f);
+    } catch (IllegalStateException e) {
+      if (!(e.getCause() instanceof org.sqlite.SQLiteException se) || (se.getResultCode().code & 0xff) != SQLITE_BUSY) throw e;
+      log.warn("{} hit SQLITE_BUSY; retrying once", op, e);
+      try {
+        Thread.sleep(BUSY_RETRY_WAIT_MS);
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        throw e;
+      }
+      return tx(f);
+    }
+  }
+
   /** 同じ発話・エンジンのキュー済み partial は、より新しいジョブで置き換える。final は捨てない。 */
   public void enqueue(String utt, int rev, boolean fin, String path, long bytes, String engine) {
-    tx(c -> {
+    txRetryingBusy("enqueue", c -> {
       c.setAutoCommit(false);
       long now = System.currentTimeMillis();
       try (var u = c.prepareStatement(
@@ -139,7 +170,7 @@ public final class Db {
   }
 
   public void complete(long id, String worker, String text, double logProbabilitySum, int scoredTokenCount) {
-    tx(c -> {
+    txRetryingBusy("complete", c -> {
       try (var p = c.prepareStatement(
           "UPDATE jobs SET status='completed', text=?, log_probability_sum=?, scored_token_count=?, completed_at=? WHERE job_id=? AND status='processing' AND worker_id=?")) {
         p.setString(1, text); p.setDouble(2, logProbabilitySum); p.setInt(3, scoredTokenCount);
