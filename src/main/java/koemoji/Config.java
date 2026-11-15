@@ -23,7 +23,7 @@ public record Config(
     float normalizeTargetDbfs, float normalizeMaxGainDb, float normalizePeak,
     String decodingMethod, Map<String, String> decodingMethodByEngine, int maxActivePaths,
     boolean sensevoiceItn, float normalizeSilenceDbfs, Map<String, Float> blankPenaltyByEngine,
-    float minPeak, Map<String, Float> minAvgLogProbByEngine) {
+    float minPeak, Map<String, Float> minAvgLogProbByEngine, int healthMaxQueueAgeSec, int queueStallWarnSec) {
 
   public static final String DEFAULT_MESSAGE_FORMAT = "`{user}`: `{text}`";
   public static final String GREEDY_SEARCH = "greedy_search";
@@ -68,7 +68,14 @@ public record Config(
         silenceDbfs(parseFloat("ASR_NORMALIZE_SILENCE_DBFS", s.apply("ASR_NORMALIZE_SILENCE_DBFS", "-60"))),
         blankPenaltyByEngine("ASR_BLANK_PENALTY_BY_ENGINE", s.apply("ASR_BLANK_PENALTY_BY_ENGINE", "")),
         minPeak(parseFloat("ASR_MIN_PEAK", s.apply("ASR_MIN_PEAK", "0.05"))),
-        minAvgLogProbByEngine("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", s.apply("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "")));
+        minAvgLogProbByEngine("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", s.apply("ASR_MIN_AVG_LOG_PROB_BY_ENGINE", "")),
+        nonNegative("HEALTH_MAX_QUEUE_AGE_SEC", i.applyAsInt("HEALTH_MAX_QUEUE_AGE_SEC", 1800)),
+        nonNegative("QUEUE_STALL_WARN_SEC", i.applyAsInt("QUEUE_STALL_WARN_SEC", 300)));
+  }
+
+  private static int nonNegative(String key, int v) {
+    if (v < 0) throw new IllegalArgumentException(key + " must be >= 0: " + v);
+    return v;
   }
 
   private static Map<String, Float> minAvgLogProbByEngine(String key, String v) {

@@ -61,6 +61,8 @@ Discord 上で、文字起こしを投稿したいテキストチャンネルで
 | `ASR_LANGUAGE` | `ja` | SenseVoice / Whisper への言語ヒント(空なら自動判定) |
 | `INCLUDE_BOTS` | `true` | 他の bot の音声も文字起こしする |
 | `HEALTH_PORT` | `8080` | `/health` と `/metrics` の HTTP ポート(`0` で無効。無効のときは Docker の `HEALTHCHECK` も常に成功します) |
+| `HEALTH_MAX_QUEUE_AGE_SEC` | `1800` | worker を持つプロセスで、担当エンジンの queued ジョブが最も古いものでもこの秒数を超えて待っていたら、`/health` が 503 を返します(`0` で無効) |
+| `QUEUE_STALL_WARN_SEC` | `300` | queued ジョブがこの秒数を超えて待っているエンジンについて、60 秒ごとに WARN ログを出します(`0` で無効) |
 | `MODELS_DIR`、`VAD_MODEL`、`AUDIO_DIR`、`QUEUE_DB` | `Config.java` 参照 | 各種パス。Docker イメージでは `/data` 以下に設定済みです |
 
 同梱の `compose.yaml` は、`ASR_THREADS` を `2`、`ASR_LANGUAGE` を `ja`、`ASR_PAD_MS` を `300` に設定しています。この表の既定値は、環境変数を指定しなかったときのアプリの値です。
@@ -174,8 +176,22 @@ docker compose run --rm koemoji replay \
 
 ## 運用
 
-- `/health` は、Discord に接続済み(capture)かつ、設定した全ワーカースレッドが生存(worker)のときだけ 200 を返します。Docker の `HEALTHCHECK` がこれを呼びます。
-- `/metrics` は Prometheus 形式で、`koemoji_jobs{engine,status}`(キューの深さと結果)、`koemoji_workers_alive`、エンジンごとの認識回数と所要時間を返します。
+- `/health` は、Discord に接続済み(capture)かつ、設定した全ワーカースレッドが生存(worker)のときだけ 200 を返します。Docker の `HEALTHCHECK` がこれを呼びます。worker を持つプロセスでは、担当エンジンの queued ジョブの最大年齢が `HEALTH_MAX_QUEUE_AGE_SEC` を超えたときも 503 を返します。capture のみのプロセスはキューの滞留を見ません。キューの読み取りに失敗したときは、一時的な `SQLITE_BUSY` で unhealthy にしないよう、この判定を飛ばします。
+- `/metrics` は Prometheus 形式で、`koemoji_jobs{engine,status}`(キューの深さと結果)、`koemoji_workers_alive`、エンジンごとの認識回数と所要時間を返します。加えて、エンジンごとに `koemoji_oldest_queued_age_seconds`(最も古い queued ジョブの年齢。無ければ `0`)と、`koemoji_jobs_failed_5m`(直近 5 分に失敗したジョブ数)を返します。失敗ジョブの行は `FAILED_AUDIO_TTL_MIN` が過ぎると消えるため、`koemoji_jobs_failed_5m` は `FAILED_AUDIO_TTL_MIN` が 5 分以上であることを前提にしています。
+- `HEALTH_PORT` は compose では `expose` のみで、ホストには公開されません。Prometheus などで外部から取得するときは、同じネットワークに参加させるか、公開する範囲を管理者が決めてください。
+- キューの滞留は、Prometheus と Alertmanager では次のようなルールで検知できます。ログ監視なら、`queue stalled: engine=<engine> oldest queued <N>s > <M>s` という WARN を対象にします。
+
+  ```yaml
+  groups:
+    - name: koemoji
+      rules:
+        - alert: KoemojiQueueStalled
+          expr: koemoji_oldest_queued_age_seconds > 300
+          for: 5m
+        - alert: KoemojiJobsFailing
+          expr: koemoji_jobs_failed_5m > 0
+          for: 10m
+  ```
 - 起動時に、未知のエンジン名は即エラーになります。`MODE=all` では、ワーカーのないエンジンもエラーです。`MODE=capture` ではワーカー側が分からないため、ワーカーコンテナの `WORKER_ENGINES` が `ASR_ENGINES` を網羅するようにしてください。
 - ユーザー別の音声パイプライン(VAD)は、音声が 5 分途切れると解放されます。
 - `updater` は GitHub Releases の stable version を 10 分ごとに確認し、latest tag を使うアプリ service だけを更新します。version 固定や digest 固定の service は対象外です。更新前に音声・キュー・Discord 投稿を drain し、更新後の health check に失敗した場合は直前の image に戻します。drain が 60 秒以内に完了しない場合は更新を中止します。

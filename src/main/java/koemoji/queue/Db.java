@@ -279,6 +279,31 @@ public final class Db {
     });
   }
 
+  /** エンジンごとの、最も古い queued ジョブの年齢(ミリ秒)。queued が無いエンジンは含まれない。 */
+  public Map<String, Long> oldestQueuedAgeMs(long nowMs) {
+    return tx(c -> {
+      var out = new TreeMap<String, Long>();
+      try (var s = c.createStatement(); var r = s.executeQuery("SELECT engine, MIN(created_at) FROM jobs WHERE status='queued' GROUP BY engine")) {
+        while (r.next()) out.put(r.getString(1), Math.max(0, nowMs - r.getLong(2)));
+      }
+      return out;
+    });
+  }
+
+  /** エンジンごとの、sinceMs 以降(その時刻を含む)に失敗したジョブ数。失敗が無いエンジンは含まれない。 */
+  public Map<String, Long> failedSince(long sinceMs) {
+    return tx(c -> {
+      var out = new TreeMap<String, Long>();
+      try (var p = c.prepareStatement("SELECT engine, COUNT(*) FROM jobs WHERE status='failed' AND completed_at>=? GROUP BY engine")) {
+        p.setLong(1, sinceMs);
+        try (var r = p.executeQuery()) {
+          while (r.next()) out.put(r.getString(1), r.getLong(2));
+        }
+      }
+      return out;
+    });
+  }
+
   public long pendingJobCount() {
     return tx(c -> {
       try (var s = c.createStatement(); var r = s.executeQuery("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')")) {
