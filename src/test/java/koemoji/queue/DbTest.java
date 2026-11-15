@@ -265,6 +265,66 @@ class DbTest {
     assertEquals(10L, db.routeOf(1, "b"));
   }
 
+  private static final int PRODUCERS = 4, PER_PRODUCER = 25, WORKERS = 4, TOTAL = PRODUCERS * PER_PRODUCER;
+
+  /** reaper が回収した件数を返す。 */
+  private int runConcurrently(boolean withReaper) throws Exception {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+    var completed = new java.util.concurrent.atomic.AtomicInteger();
+    var reaped = new java.util.concurrent.atomic.AtomicInteger();
+    var claimed = java.util.concurrent.ConcurrentHashMap.<Long>newKeySet();
+    var duplicates = new java.util.concurrent.ConcurrentLinkedQueue<Long>();
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(PRODUCERS + WORKERS + 1);
+    try {
+      var tasks = new java.util.ArrayList<java.util.concurrent.Future<Void>>();
+      for (int p = 0; p < PRODUCERS; p++) {
+        int producer = p;
+        tasks.add(pool.submit(() -> {
+          for (int i = 0; i < PER_PRODUCER; i++) enqueue("u" + producer + "-" + i, 1, true, "e");
+          return null;
+        }));
+      }
+      for (int w = 0; w < WORKERS; w++) {
+        String worker = "w" + w;
+        tasks.add(pool.submit(() -> {
+          while (completed.get() < TOTAL && System.nanoTime() < deadline) {
+            var job = db.claim(worker, "e");
+            if (job.isEmpty()) { Thread.sleep(5); continue; }
+            if (!claimed.add(job.get().id())) duplicates.add(job.get().id());
+            db.complete(job.get().id(), worker, "ok");
+            completed.incrementAndGet();
+          }
+          return null;
+        }));
+      }
+      if (withReaper) {
+        tasks.add(pool.submit(() -> {
+          while (completed.get() < TOTAL && System.nanoTime() < deadline) {
+            reaped.addAndGet(db.requeueStale(60_000, 5));
+            Thread.sleep(5);
+          }
+          return null;
+        }));
+      }
+      for (var t : tasks) t.get(35, java.util.concurrent.TimeUnit.SECONDS);  // スレッド内の例外をここで再スローする
+    } finally {
+      pool.shutdownNow();
+    }
+    assertTrue(pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS));
+    assertEquals(TOTAL, completed.get());
+    assertEquals(java.util.List.of(), java.util.List.copyOf(duplicates));
+    assertEquals(Map.of("e|completed", (long) TOTAL), db.counts());
+    return reaped.get();
+  }
+
+  @Test void concurrentEnqueueClaimAndCompleteLoseNoJobAndClaimEachOnce() throws Exception {
+    runConcurrently(false);
+  }
+
+  @Test void reaperRunningConcurrentlyDoesNotRequeueFreshProcessingJobs() throws Exception {
+    assertEquals(0, runConcurrently(true));
+  }
+
   @Test void staleJobsAreFailedOnceRetriesAreUsedUp() {
     enqueue("u1", 1, true, "e");
     db.claim("dead-worker", "e");
