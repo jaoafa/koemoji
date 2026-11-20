@@ -10,7 +10,7 @@ RUN scripts/install-sherpa.sh
 COPY src src
 RUN mvn -q -B package -DskipTests
 
-FROM eclipse-temurin:25.0.4.1_1-jre@sha256:fcd7fd7b387f94bb2ac461478a7436ad8e349924c374ea8313919624dceae636
+FROM eclipse-temurin:25.0.4.1_1-jre@sha256:78f1f183913482ef390c2722f46c3f0ce76ada341d69590e7c482ec943ee72d5
 ARG APPLICATION_VERSION=0.0.0
 ARG GIT_REVISION=unknown
 COPY --from=build /src/target/koemoji.jar /app/koemoji.jar
