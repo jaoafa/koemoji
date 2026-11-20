@@ -9,7 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import koemoji.Config;
 import koemoji.queue.Db;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 /** Bot.decide(inChannel, leftBotChannel, joinedAny, joinedAfk, botChannelHumans, joinedHumans) の判定を確かめる。 */
@@ -45,6 +47,27 @@ class BotTest {
   @Test void botStaysWhileHumansRemain() {
     assertEquals(NONE, decide(true, true, false, false, 1, 0));
     assertEquals(NONE, decide(true, true, true, true, 1, 1));
+  }
+
+  @Test void startupJoinsTheChannelWithTheMostHumans() {
+    var picked = Bot.pickStartupChannel(List.of(
+        new Bot.Candidate(10, 1, false), new Bot.Candidate(20, 3, false), new Bot.Candidate(30, 2, false)));
+    assertEquals(OptionalLong.of(20), picked);
+  }
+
+  @Test void startupBreaksTiesBySmallerChannelId() {
+    var picked = Bot.pickStartupChannel(List.of(new Bot.Candidate(30, 2, false), new Bot.Candidate(20, 2, false)));
+    assertEquals(OptionalLong.of(20), picked);
+  }
+
+  @Test void startupIgnoresAfkEvenWhenItHasTheMostHumans() {
+    var picked = Bot.pickStartupChannel(List.of(new Bot.Candidate(10, 1, false), new Bot.Candidate(20, 5, true)));
+    assertEquals(OptionalLong.of(10), picked);
+  }
+
+  @Test void startupJoinsNothingWithoutHumans() {
+    assertEquals(OptionalLong.empty(), Bot.pickStartupChannel(List.of(new Bot.Candidate(10, 0, false))));
+    assertEquals(OptionalLong.empty(), Bot.pickStartupChannel(List.of()));
   }
 
   @Test void channelRegistrationRequiresViewAndSendPermissionsAndPreservesTheCurrentRoute() throws Exception {
