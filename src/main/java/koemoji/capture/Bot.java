@@ -92,6 +92,7 @@ public final class Bot extends ListenerAdapter {
     transcripts = new Transcripts(c, db, id -> jda.getChannelById(MessageChannel.class, id));
     sched.scheduleWithFixedDelay(() -> guard(() -> handlers.values().forEach(Handler::tick)), 100, 100, TimeUnit.MILLISECONDS);
     sched.scheduleWithFixedDelay(() -> guard(transcripts::apply), 250, 250, TimeUnit.MILLISECONDS);
+    rejoinAfterRestart();
     log.info("bot ready as {}", jda.getSelfUser().getName());
   }
 
@@ -181,6 +182,37 @@ public final class Bot extends ListenerAdapter {
   private static boolean isAfk(AudioChannel ch) {
     var afk = ch.getGuild().getAfkChannel();
     return afk != null && afk.getIdLong() == ch.getIdLong();
+  }
+
+  record Candidate(long channelId, long humans, boolean afk) {}
+
+  /** 起動時の参加先を決める。人間のいる AFK 以外の VC のうち人間が最多のもの。同数なら channelId が小さいもの。 */
+  static OptionalLong pickStartupChannel(Collection<Candidate> candidates) {
+    return candidates.stream()
+        .filter(k -> !k.afk() && k.humans() > 0)
+        .min(Comparator.comparingLong(Candidate::humans).reversed().thenComparingLong(Candidate::channelId))
+        .map(k -> OptionalLong.of(k.channelId()))
+        .orElse(OptionalLong.empty());
+  }
+
+  /** 再起動で切れた接続の代わりに、登録済みのサーバーごとに人間の最も多い VC へ参加する。 */
+  private void rejoinAfterRestart() {
+    if (draining) return;
+    for (Guild g : jda.getGuilds()) {
+      try {
+        if (!db.hasRoutes(g.getIdLong()) || g.getAudioManager().isConnected()) continue;
+        var channels = new ArrayList<AudioChannel>(g.getVoiceChannels());
+        channels.addAll(g.getStageChannels());
+        var candidates = channels.stream().map(ch -> new Candidate(ch.getIdLong(), humans(ch), isAfk(ch))).toList();
+        pickStartupChannel(candidates).ifPresent(id -> {
+          var ch = g.getChannelById(AudioChannel.class, id);
+          log.info("rejoin after restart guild={} channel={} humans={}", g.getId(), id, humans(ch));
+          connect(g, ch);
+        });
+      } catch (Exception ex) {
+        log.warn("rejoin failed guild={}", g.getId(), ex);
+      }
+    }
   }
 
   enum Move { NONE, JOIN, LEAVE }
